@@ -1,0 +1,31 @@
+{
+  "name": "sc-workorders-mcp",
+  "version": "0.1.0",
+  "description": "Read-only MCP server wrapping ServiceChannel's Sandbox2 OData API for work order queries",
+  "license": "MIT",
+  "private": true,
+  "author": "Zac Wolf",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zwolf25/sc-workorders-mcp.git"
+  },
+  "keywords": ["mcp", "model-context-protocol", "servicechannel"],
+  "type": "module",
+  "main": "dist/src/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node --env-file=.env dist/src/index.js",
+    "test": "npm run build && node --env-file=.env dist/test.js"
+  },
+  "engines": {
+    "node": ">=20.6"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.6.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2"
+  }
+}
