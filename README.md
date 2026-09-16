@@ -2,9 +2,9 @@
 
 A local, read-only [MCP](https://modelcontextprotocol.io) server that lets an LLM query ServiceChannel work orders, locations, and provider assignments through typed tool calls instead of constructing raw API requests itself.
 
-Three tools: `search_work_orders`, `get_work_order`, `search_locations`. All read-only — no writes, no mutations.
+Four tools: `search_work_orders`, `get_work_order`, `get_work_order_notes`, `search_locations`. All read-only — no writes, no mutations.
 
-For everything else — how it works end to end, the auth model, ServiceChannel API quirks discovered along the way, design decisions, and how to rebuild it from scratch — see **[ARCHITECTURE.md](./ARCHITECTURE.md)**.
+For everything else — how it works end to end, the auth model, ServiceChannel API quirks discovered along the way, design decisions, and how to rebuild it from scratch — see **[ARCHITECTURE.md](./ARCHITECTURE.md)**. For what's shipped, planned, proposed, or rejected — see **[BACKLOG.md](./BACKLOG.md)**.
 
 ## Quickstart
 
