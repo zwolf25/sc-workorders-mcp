@@ -1,5 +1,13 @@
 import assert from "node:assert";
-import { apiFetch, buildFilter, buildLocationFilter, toCompactWorkOrder, toCompactLocation } from "./src/sc-client.js";
+import {
+  apiFetch,
+  buildFilter,
+  buildLocationFilter,
+  buildOrderBy,
+  toCompactWorkOrder,
+  toCompactLocation,
+  toCompactNote,
+} from "./src/sc-client.js";
 
 async function main() {
   const t0 = Date.now();
@@ -67,6 +75,53 @@ async function main() {
     "each location needs id + name"
   );
   console.log(`PASS: search_locations name='Union' returned ${locations.length} results (${locLatency}ms)`);
+
+  const t5 = Date.now();
+  const categoryFilter = buildFilter({ category: "REPAIR", completedDateFrom: "2020-01-01" } as any);
+  const categoryResult = await apiFetch("/v3/odata/workorders", { $filter: categoryFilter!, $top: "5" });
+  const categoryLatency = Date.now() - t5;
+  const categoryMatches = (categoryResult.value ?? []).map(toCompactWorkOrder);
+  assert.ok(categoryMatches.length > 0, "category+completedDateFrom filter should find at least one work order");
+  assert.ok(
+    categoryMatches.every((wo: { category: string; completedDate: string | null }) => wo.category === "REPAIR" && wo.completedDate),
+    "every result should be REPAIR category with a non-null completedDate"
+  );
+  console.log(`PASS: search_work_orders category+completedDateFrom returned ${categoryMatches.length} results (${categoryLatency}ms)`);
+
+  const t6 = Date.now();
+  const orderBy = buildOrderBy("createdDate", "desc");
+  const sortResult = await apiFetch("/v3/odata/workorders", { $orderby: orderBy!, $top: "10" });
+  const sortLatency = Date.now() - t6;
+  const sorted = (sortResult.value ?? []).map(toCompactWorkOrder);
+  const isNonIncreasing = sorted.every(
+    (wo: { createdDate: string }, i: number) => i === 0 || wo.createdDate <= sorted[i - 1].createdDate
+  );
+  assert.ok(isNonIncreasing, "sortBy=createdDate desc should return non-increasing createdDate values");
+  console.log(`PASS: search_work_orders sortBy=createdDate desc returned ${sorted.length} results in order (${sortLatency}ms)`);
+
+  const t7 = Date.now();
+  const [page1, page2] = await Promise.all([
+    apiFetch("/v3/odata/workorders", { $top: "5", $skip: "0", $count: "true" }),
+    apiFetch("/v3/odata/workorders", { $top: "5", $skip: "5", $count: "true" }),
+  ]);
+  const pageLatency = Date.now() - t7;
+  const page1Ids = new Set((page1.value ?? []).map((wo: any) => wo.Id));
+  const page2Ids = (page2.value ?? []).map((wo: any) => wo.Id);
+  assert.ok(page2Ids.every((id: number) => !page1Ids.has(id)), "offset=5 page should not overlap offset=0 page");
+  const totalCount = page1["@odata.count"];
+  assert.ok(typeof totalCount === "number" && totalCount > 10, "@odata.count should report the full match count");
+  console.log(`PASS: pagination offset=0/5 non-overlapping, totalCount=${totalCount} (${pageLatency}ms)`);
+
+  const t8 = Date.now();
+  const notesData = await apiFetch(`/v3/odata/workorders(355703118)/notes`);
+  const notesLatency = Date.now() - t8;
+  const notes = (notesData.value ?? []).map(toCompactNote);
+  assert.ok(notes.length > 1, "known multi-note work order should return more than one note");
+  assert.ok(
+    notes.every((n: { text: string; createdBy: string }) => n.text && n.createdBy),
+    "every note should have non-empty text and createdBy"
+  );
+  console.log(`PASS: get_work_order_notes(355703118) returned ${notes.length} notes (${notesLatency}ms)`);
 
   console.log("\nAll checks passed.");
 }

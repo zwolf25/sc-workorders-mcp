@@ -92,6 +92,11 @@ export interface SearchFilters {
   dateTo?: string;
   providerId?: number;
   providerName?: string;
+  category?: string;
+  scheduledDateFrom?: string;
+  scheduledDateTo?: string;
+  completedDateFrom?: string;
+  completedDateTo?: string;
 }
 
 function odataString(value: string): string {
@@ -109,7 +114,26 @@ export function buildFilter(f: SearchFilters): string | undefined {
   if (f.dateTo) clauses.push(`CreatedDate le ${f.dateTo}T23:59:59Z`);
   if (f.providerId) clauses.push(`Provider/Id eq ${f.providerId}`);
   if (f.providerName) clauses.push(`contains(Provider/Name,${odataString(f.providerName)})`);
+  if (f.category) clauses.push(`Category eq ${odataString(f.category)}`);
+  if (f.scheduledDateFrom) clauses.push(`ScheduledDate ge ${f.scheduledDateFrom}T00:00:00Z`);
+  if (f.scheduledDateTo) clauses.push(`ScheduledDate le ${f.scheduledDateTo}T23:59:59Z`);
+  if (f.completedDateFrom) clauses.push(`CompletedDate ge ${f.completedDateFrom}T00:00:00Z`);
+  if (f.completedDateTo) clauses.push(`CompletedDate le ${f.completedDateTo}T23:59:59Z`);
   return clauses.length ? clauses.join(" and ") : undefined;
+}
+
+// Whitelisted sortable fields only — the LLM picks from an enum in the tool
+// schema, never supplies a raw OData property name.
+const SORTABLE_FIELDS: Record<string, string> = {
+  createdDate: "CreatedDate",
+  scheduledDate: "ScheduledDate",
+  completedDate: "CompletedDate",
+};
+
+export function buildOrderBy(sortBy?: string, sortOrder: "asc" | "desc" = "desc"): string | undefined {
+  if (!sortBy) return undefined;
+  const field = SORTABLE_FIELDS[sortBy];
+  return field ? `${field} ${sortOrder}` : undefined;
 }
 
 export interface LocationFilters {
@@ -176,8 +200,12 @@ export interface CompactWorkOrder {
   id: number;
   status: { primary: string; extended: string };
   trade: string;
+  tradeId: number | null;
   locationId: number;
   priority: string;
+  priorityId: number | null;
+  category: string;
+  categoryId: number | null;
   description: string;
   createdDate: string;
   scheduledDate: string | null;
@@ -190,8 +218,12 @@ export function toCompactWorkOrder(raw: any): CompactWorkOrder {
     id: raw.Id,
     status: { primary: raw.Status?.Primary ?? "", extended: raw.Status?.Extended ?? "" },
     trade: raw.Trade ?? "",
+    tradeId: raw.TradeId ?? null,
     locationId: raw.LocationId,
     priority: raw.Priority ?? "",
+    priorityId: raw.PriorityId ?? null,
+    category: raw.Category ?? "",
+    categoryId: raw.CategoryId ?? null,
     description: raw.Description ?? "",
     createdDate: raw.CreatedDate,
     scheduledDate: raw.ScheduledDate ?? null,
@@ -205,5 +237,23 @@ export function toCompactWorkOrder(raw: any): CompactWorkOrder {
           email: raw.Provider.Email ?? null,
         }
       : null,
+  };
+}
+
+export interface CompactNote {
+  id: number;
+  number: number;
+  text: string;
+  createdBy: string;
+  createdDate: string;
+}
+
+export function toCompactNote(raw: any): CompactNote {
+  return {
+    id: raw.Id,
+    number: raw.Number,
+    text: raw.NoteData ?? "",
+    createdBy: raw.CreatedBy ?? "",
+    createdDate: raw.DateCreated,
   };
 }

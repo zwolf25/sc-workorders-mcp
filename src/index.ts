@@ -2,9 +2,17 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { apiFetch, buildFilter, buildLocationFilter, toCompactWorkOrder, toCompactLocation } from "./sc-client.js";
+import {
+  apiFetch,
+  buildFilter,
+  buildLocationFilter,
+  buildOrderBy,
+  toCompactWorkOrder,
+  toCompactLocation,
+  toCompactNote,
+} from "./sc-client.js";
 
-const server = new McpServer({ name: "sc-workorders-mcp", version: "0.1.0" });
+const server = new McpServer({ name: "sc-workorders-mcp", version: "0.2.0" });
 
 const SearchInputSchema = z
   .object({
@@ -18,6 +26,14 @@ const SearchInputSchema = z
     dateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Created on/before this date, YYYY-MM-DD"),
     providerId: z.number().int().positive().optional().describe("Exact ServiceChannel provider (vendor) ID"),
     providerName: z.string().optional().describe("Fuzzy match against the assigned provider's name"),
+    category: z.string().optional().describe("Work order category, e.g. 'MAINTENANCE', 'REPAIR', 'CAP-EX'"),
+    scheduledDateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Scheduled on/after this date, YYYY-MM-DD"),
+    scheduledDateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Scheduled on/before this date, YYYY-MM-DD"),
+    completedDateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Completed on/after this date, YYYY-MM-DD"),
+    completedDateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Completed on/before this date, YYYY-MM-DD"),
+    sortBy: z.enum(["createdDate", "scheduledDate", "completedDate"]).optional().describe("Field to sort by"),
+    sortOrder: z.enum(["asc", "desc"]).default("desc").describe("Sort direction (only used if sortBy is set)"),
+    offset: z.number().int().min(0).default(0).describe("Number of results to skip, for paging past the first page"),
     maxResults: z.number().int().min(1).max(50).default(20).describe("Max results to return (server caps at 50)"),
   })
   .strict();
@@ -26,21 +42,33 @@ server.registerTool(
   "search_work_orders",
   {
     title: "Search Work Orders",
-    description: `Search ServiceChannel work orders by status, trade, location, provider, and/or date range. Read-only.
+    description: `Search ServiceChannel work orders by status, trade, category, location, provider, and/or date range (created/scheduled/completed). Supports sorting and paging. Read-only.
 
-Returns: { count: number, workOrders: [{ id, status: {primary, extended}, trade, locationId, priority, description, createdDate, scheduledDate, completedDate, provider: {id, name, contactName, phone, email} | null }] }`,
+Returns: { count: number, totalCount: number, hasMore: boolean, workOrders: [{ id, status: {primary, extended}, trade, tradeId, locationId, priority, priorityId, category, categoryId, description, createdDate, scheduledDate, completedDate, provider: {id, name, contactName, phone, email} | null }] }
+
+totalCount is the total number of matching work orders (not just this page); hasMore is true if offset+count < totalCount. Use offset to page through results beyond the first maxResults.`,
     inputSchema: SearchInputSchema.shape,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   async (params) => {
     const filter = buildFilter(params);
+    const orderBy = buildOrderBy(params.sortBy, params.sortOrder);
     const data = await apiFetch("/v3/odata/workorders", {
       ...(filter ? { $filter: filter } : {}),
+      ...(orderBy ? { $orderby: orderBy } : {}),
       $expand: "Provider",
       $top: String(params.maxResults),
+      $skip: String(params.offset),
+      $count: "true",
     });
     const workOrders = (data.value ?? []).map(toCompactWorkOrder);
-    const output = { count: workOrders.length, workOrders };
+    const totalCount = data["@odata.count"] ?? workOrders.length;
+    const output = {
+      count: workOrders.length,
+      totalCount,
+      hasMore: params.offset + workOrders.length < totalCount,
+      workOrders,
+    };
     return { content: [{ type: "text", text: JSON.stringify(output, null, 2) }], structuredContent: output };
   }
 );
@@ -57,13 +85,33 @@ server.registerTool(
     title: "Get Work Order",
     description: `Fetch a single ServiceChannel work order by ID. Read-only.
 
-Returns: { id, status: {primary, extended}, trade, locationId, priority, description, createdDate, scheduledDate, completedDate, provider: {id, name, contactName, phone, email} | null }`,
+Returns: { id, status: {primary, extended}, trade, tradeId, locationId, priority, priorityId, category, categoryId, description, createdDate, scheduledDate, completedDate, provider: {id, name, contactName, phone, email} | null }
+
+For the work order's note history, use get_work_order_notes separately — notes aren't included here.`,
     inputSchema: GetInputSchema.shape,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   async ({ workOrderId }) => {
     const raw = await apiFetch(`/v3/odata/workorders(${workOrderId})`, { $expand: "Provider" });
     const output = toCompactWorkOrder(raw);
+    return { content: [{ type: "text", text: JSON.stringify(output, null, 2) }], structuredContent: output };
+  }
+);
+
+server.registerTool(
+  "get_work_order_notes",
+  {
+    title: "Get Work Order Notes",
+    description: `Fetch the note history for a ServiceChannel work order by ID — e.g. dispatch/reassignment notes, technician check-in/out messages, system events. Read-only.
+
+Returns: { count: number, notes: [{ id, number, text, createdBy, createdDate }] }, oldest first.`,
+    inputSchema: GetInputSchema.shape,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async ({ workOrderId }) => {
+    const data = await apiFetch(`/v3/odata/workorders(${workOrderId})/notes`);
+    const notes = (data.value ?? []).map(toCompactNote);
+    const output = { count: notes.length, notes };
     return { content: [{ type: "text", text: JSON.stringify(output, null, 2) }], structuredContent: output };
   }
 );
