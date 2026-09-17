@@ -6,32 +6,29 @@ Living list of proposed, planned, shipped, and rejected features — plus tracke
 
 Batch added 2026-09-16, live-verified against the real SB2 `$metadata` and API before being listed here (per this project's standing discipline — see `ARCHITECTURE.md`'s API quirks). Each item notes its evidence so a future session doesn't have to re-derive it.
 
-**Invoices**
-- `search_invoices` — filter by status/date/provider/work order. Standalone `/v3/odata/invoices` confirmed live (`HTTP 200`, real data present in this sandbox).
-- Get a single invoice by ID — `/v3/odata/invoices({id})` (parens form) confirmed **broken** (`HTTP 500`, same ambiguous-controller-action bug as `locations`); use the `$filter=Id eq {id}` workaround instead (confirmed working, same pattern as `buildLocationFilter` — see the comment at that call site in `sc-client.ts`). This will be the second real use of that pattern — worth extracting into a shared helper when this ships, per the Tech Debt entry on that decision.
-- Surface invoice info directly on a work order via `$expand=Invoice` — confirmed live and null-safe (returns `Invoice: null` cleanly when none exists) on both `get_work_order` and `search_work_orders`.
+**Prioritized 2026-09-16** on three axes: confirmed feasibility (live-verified with real data > callable but untested against data > design unverified), value against triage questions this tool already exists to answer, and effort relative to patterns already in the codebase. This ordering isn't fixed — re-prioritize whenever new evidence (real proposal/RFP data lands in the sandbox, a location-rollup spike gets run, etc.) changes any of those three inputs.
 
-**Assets**
-- Expose a work order's attached assets via `$expand=Assets` — confirmed live with real data (a work order with `AssetCount: 60` returned full nested asset objects). Likely a dedicated `get_work_order_assets` tool rather than a field bolted onto `get_work_order`, mirroring `get_work_order_notes`'s pattern — a 60-item asset list argues for the same "separate call, only pay for it when asked" tradeoff already made for notes. Response-size management (see Tech Debt) matters here more than anywhere else in the project so far.
-- ~~`search_assets`/`get_asset` as a standalone directory~~ — **not buildable**, see Rejected below.
+### Now — small, fully proven, closes a felt gap
 
-**Proposals & RFPs** (this is the natural technical seed of the initiative's "Assists" tier — draft-first proposal/invoice review, per the Eng Plan docs)
-- `search_proposals` — standalone `/v3/odata/proposals` confirmed live (`HTTP 200`), but this sandbox currently has **zero** proposal records, so only "the endpoint responds" is verified — filter mechanics against real data are still unconfirmed. Re-verify against real records before shipping.
-- `search_rfps` — same situation: `/v3/odata/rfps` confirmed live (`HTTP 200`), zero live records to test filters against.
+- **Surface invoice info on work orders** — add an `invoice` field to `get_work_order`/`search_work_orders` via `$expand=Invoice` (confirmed live and null-safe — returns `Invoice: null` cleanly when none exists). Smallest possible lift: same `$select`/`$expand`/mapper pattern already used for `provider`, no new tool, no new request shape.
+- **`search_trades`** — standalone `/v3/odata/trades` confirmed live with real data (e.g. `"GENERAL MAINTENANCE"`). Closes an already-felt gap: `search_work_orders`'s `trade`/`category` filters currently require the caller to already know the exact string, with no way to discover valid values first — same role `search_locations` already plays for `locationId`. Same effort tier as the invoice item: one new tool, but it's a near-exact copy of `search_locations`'s existing shape.
 
-**Trades — closes a real, already-felt gap**
-- `search_trades` — standalone `/v3/odata/trades` confirmed live with real data (e.g. `"GENERAL MAINTENANCE"`). Right now `search_work_orders`'s `trade`/`category` filters require the caller to already know the exact string with no way to discover valid values first — this plays the same role for `trade` that `search_locations` already plays for `locationId`.
+### Next — proven with real data, more design surface than "Now"
 
-**Work order activity/timeline**
-- `get_work_order_activities` — via the sub-resource path `/workorders({id})/workactivities` (confirmed live, `HTTP 200`; empty for the one work order tested, but the path itself works). Note `$expand=workactivities` is **broken** the same way `$expand=notes` is (`"has no supported translation to SQL"`) — this needs the sub-resource path, exactly like notes. Should follow `get_work_order_notes`'s pattern closely enough that the two might share a helper.
+- **`get_work_order_assets`** — via `$expand=Assets` (confirmed live with real data — a work order with `AssetCount: 60` returned full nested asset objects). A dedicated tool, mirroring `get_work_order_notes`'s "separate call, only pay for it when asked" tradeoff. Behind invoice/trades in priority only because a 60-item list makes it the first tool that actually needs the still-open response-size/truncation tech debt item — sequence that decision alongside this, not after shipping it blind.
+- **`get_work_order_activities`** — via the sub-resource path `/workorders({id})/workactivities` (confirmed live, `HTTP 200`, following the exact same broken-`$expand`/working-sub-resource pattern as notes). Ranked just behind assets because the one work order tested had zero activity records — the path works, but real field shapes/value are less proven than notes or assets were.
 
-**Composite/workflow tools** (see the orchestrator question, addressed in-thread rather than as its own backlog item — the short version: no meta "which tool do I call" tool, that's the calling LLM's job; the right pattern is an ordinary tool that bundles a few already-working calls for a common multi-entity question)
-- `get_work_order_context` — one call returning a work order + its notes + its assets + its invoice together, for the common "give me the full picture on WO X" ask instead of 3–4 separate tool calls. Every underlying call is already confirmed working; the open design question is response-size handling for a work order with many assets (see the 60-asset example above).
-- Location-level rollup (e.g. open-work-order count per location) — **not yet verified**: whether `$count`/`$expand` compose against a location's `workorders` navigation property is untested. Check that live before designing the tool, not after.
+### Later — valuable, but bigger scope or sequenced behind "Now"/"Next"
 
-**Low-priority / speculative** — found live during this research pass, listed for completeness since the ask was explicitly to look beyond work orders, but no concrete use case behind either yet
-- Weather events on a work order (`$expand=WeatherEvent`, confirmed live, null-safe) — plausible relevance for storm-driven work-order surge analysis; no request behind it yet.
-- Technician/vehicle directory (`/v3/odata/trucks`, confirmed live with real data) — likely outside this project's FM-triage scope; noted only because it exists.
+- **`get_work_order_context`** (composite tool bundling a work order + notes + assets + invoice in one call) — every underlying piece is confirmed working, but it's compositing tools that don't fully exist yet (assets, and ideally activities). Build this after its parts ship, not before — sequencing, not a feasibility question. Still has the open truncation design question from the assets item above.
+- **`search_invoices`** (+ get-by-id via the `$filter=Id eq {id}` workaround, since the parens form is confirmed broken the same way `locations({id})` is) — real live data confirmed, but this is a bigger lift (a whole new entity/tool) than just surfacing invoice data on work orders (see "Now" above). Worth building once it's clear WO-embedded invoice data isn't enough on its own — invoice-first queries ("show me unpaid invoices") are a different shape of question than work-order-first ones. This would be the second real use of the parens-broken workaround — extract the shared helper mentioned in the Tech Debt entry when this ships.
+- **Location-level rollup** (e.g. open-work-order count per location) — genuinely unverified, not just lower-value: whether `$count`/`$expand` compose against a location's `workorders` navigation property has never been tested live. Needs its own verification spike before it can even be scoped, unlike everything above.
+
+### Someday — real, but currently unverifiable or low-signal
+
+- **`search_proposals` / `search_rfps`** — both endpoints confirmed live and callable, but this sandbox has **zero** real records for either, so only "the endpoint responds" is verified — filter mechanics are still unconfirmed. Strategically interesting (the natural technical seed of the initiative's "Assists" tier — draft-first proposal/invoice review, per the Eng Plan docs) but not actionable until real data exists to verify against, or test fixtures get created deliberately.
+- **Weather events on a work order** (`$expand=WeatherEvent`, confirmed live, null-safe) — plausible relevance for storm-driven work-order surge analysis; no request behind it yet.
+- **Technician/vehicle directory** (`/v3/odata/trucks`, confirmed live with real data) — likely outside this project's FM-triage scope; kept for completeness only. Candidate for deletion from this backlog if nothing surfaces a real use case by the next review.
 
 ## Planned
 
