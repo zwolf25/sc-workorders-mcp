@@ -7,15 +7,19 @@ import {
   buildFilter,
   buildLocationFilter,
   buildOrderBy,
+  buildTradeFilter,
   toCompactWorkOrder,
   toCompactLocation,
   toCompactNote,
+  toCompactTrade,
   WORKORDER_SELECT,
+  WORKORDER_EXPAND,
   LOCATION_SELECT,
   NOTE_SELECT,
+  TRADE_SELECT,
 } from "./sc-client.js";
 
-const server = new McpServer({ name: "sc-workorders-mcp", version: "0.2.0" });
+const server = new McpServer({ name: "sc-workorders-mcp", version: "0.3.0" });
 
 const SearchInputSchema = z
   .object({
@@ -71,7 +75,7 @@ server.registerTool(
     title: "Search Work Orders",
     description: `Search ServiceChannel work orders by status, trade, category, location, provider, and/or date range (created/scheduled/completed). Supports sorting and paging. Read-only.
 
-Returns: { count: number, totalCount: number, hasMore: boolean, workOrders: [{ id, status: {primary, extended}, trade, tradeId, locationId, priority, priorityId, category, categoryId, description, createdDate, scheduledDate, completedDate, provider: {id, name, contactName, phone, email} | null }] }
+Returns: { count: number, totalCount: number, hasMore: boolean, workOrders: [{ id, status: {primary, extended}, trade, tradeId, locationId, priority, priorityId, category, categoryId, description, createdDate, scheduledDate, completedDate, provider: {id, name, contactName, phone, email} | null, invoice: {id, number, status, total, balance, invoiceDate, paidDate} | null }] }
 
 totalCount is the total number of matching work orders (not just this page); hasMore is true if offset+count < totalCount. Use offset to page through results beyond the first maxResults.`,
     inputSchema: SearchInputSchema.shape,
@@ -84,7 +88,7 @@ totalCount is the total number of matching work orders (not just this page); has
       ...(filter ? { $filter: filter } : {}),
       ...(orderBy ? { $orderby: orderBy } : {}),
       $select: WORKORDER_SELECT,
-      $expand: "Provider",
+      $expand: WORKORDER_EXPAND,
       $top: String(params.maxResults),
       $skip: String(params.offset),
       $count: "true",
@@ -113,7 +117,7 @@ server.registerTool(
     title: "Get Work Order",
     description: `Fetch a single ServiceChannel work order by ID. Read-only.
 
-Returns: { id, status: {primary, extended}, trade, tradeId, locationId, priority, priorityId, category, categoryId, description, createdDate, scheduledDate, completedDate, provider: {id, name, contactName, phone, email} | null }
+Returns: { id, status: {primary, extended}, trade, tradeId, locationId, priority, priorityId, category, categoryId, description, createdDate, scheduledDate, completedDate, provider: {id, name, contactName, phone, email} | null, invoice: {id, number, status, total, balance, invoiceDate, paidDate} | null }
 
 For the work order's note history, use get_work_order_notes separately — notes aren't included here.`,
     inputSchema: GetInputSchema.shape,
@@ -122,7 +126,7 @@ For the work order's note history, use get_work_order_notes separately — notes
   async ({ workOrderId }) => {
     const raw = await apiFetch(`/v3/odata/workorders(${workOrderId})`, {
       $select: WORKORDER_SELECT,
-      $expand: "Provider",
+      $expand: WORKORDER_EXPAND,
     });
     const output = toCompactWorkOrder(raw);
     return { content: [{ type: "text", text: JSON.stringify(output, null, 2) }], structuredContent: output };
@@ -182,6 +186,38 @@ Returns: { count: number, locations: [{ id, name, storeId, address, city, state,
     });
     const locations = (data.value ?? []).map(toCompactLocation);
     const output = { count: locations.length, locations };
+    return { content: [{ type: "text", text: JSON.stringify(output, null, 2) }], structuredContent: output };
+  },
+);
+
+const SearchTradesInputSchema = z
+  .object({
+    name: z.string().optional().describe("Fuzzy match against trade name (case-insensitive substring), e.g. 'plumb'"),
+    maxResults: z.number().int().min(1).max(50).default(25).describe("Max results to return (server caps at 50)"),
+  })
+  .strict();
+
+server.registerTool(
+  "search_trades",
+  {
+    title: "Search Trades",
+    description: `Look up ServiceChannel trade names (e.g. "PLUMBING", "ELECTRICAL"), optionally fuzzy-matched. Read-only.
+
+Use this to discover the exact trade string search_work_orders' \`trade\`/\`category\` filters need — those require an exact match and there's no other way to know valid values in advance. Call with no arguments to list all trades (there are usually only a couple dozen).
+
+Returns: { count: number, trades: [{ id, name }] }`,
+    inputSchema: SearchTradesInputSchema.shape,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async (params) => {
+    const filter = buildTradeFilter(params);
+    const data = await apiFetch("/v3/odata/trades", {
+      ...(filter ? { $filter: filter } : {}),
+      $select: TRADE_SELECT,
+      $top: String(params.maxResults),
+    });
+    const trades = (data.value ?? []).map(toCompactTrade);
+    const output = { count: trades.length, trades };
     return { content: [{ type: "text", text: JSON.stringify(output, null, 2) }], structuredContent: output };
   },
 );

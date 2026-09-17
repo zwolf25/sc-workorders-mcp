@@ -10,8 +10,16 @@ process.env.SC_CLIENT_SECRET ??= "unit-test-placeholder";
 process.env.SC_USERNAME ??= "unit-test-placeholder";
 process.env.SC_PASSWORD ??= "unit-test-placeholder";
 
-const { buildFilter, buildLocationFilter, buildOrderBy, toCompactWorkOrder, toCompactLocation, toCompactNote } =
-  await import("./src/sc-client.js");
+const {
+  buildFilter,
+  buildLocationFilter,
+  buildOrderBy,
+  buildTradeFilter,
+  toCompactWorkOrder,
+  toCompactLocation,
+  toCompactNote,
+  toCompactTrade,
+} = await import("./src/sc-client.js");
 
 // buildFilter
 assert.strictEqual(buildFilter({}), undefined, "no fields -> no filter");
@@ -61,12 +69,31 @@ const compact = toCompactWorkOrder({
   ScheduledDate: null,
   CompletedDate: null,
   Provider: { Id: 7, Name: "Acme", MainContact: "Jane", Phone: "555", Email: "a@b.com" },
+  Invoice: {
+    Id: 8,
+    Number: "INV-1",
+    Status: "OPEN",
+    InvoiceTotal: 100.5,
+    InvoiceBalance: 50,
+    InvoiceDate: "2026-01-02",
+    PaidDate: null,
+  },
 });
 assert.strictEqual(compact.id, 1);
 assert.deepStrictEqual(compact.provider, { id: 7, name: "Acme", contactName: "Jane", phone: "555", email: "a@b.com" });
+assert.deepStrictEqual(compact.invoice, {
+  id: 8,
+  number: "INV-1",
+  status: "OPEN",
+  total: 100.5,
+  balance: 50,
+  invoiceDate: "2026-01-02",
+  paidDate: null,
+});
 
 const compactNoProvider = toCompactWorkOrder({ Id: 2, Status: {}, LocationId: 1, CreatedDate: "2026-01-01" });
 assert.strictEqual(compactNoProvider.provider, null, "a missing Provider maps to null, not undefined or a throw");
+assert.strictEqual(compactNoProvider.invoice, null, "a missing Invoice maps to null, not undefined or a throw");
 assert.strictEqual(compactNoProvider.trade, "", "missing string fields default to empty string, not undefined");
 console.log("PASS: toCompactWorkOrder");
 
@@ -81,5 +108,15 @@ console.log("PASS: toCompactLocation");
 const note = toCompactNote({ Id: 1, Number: 1, NoteData: "hello", CreatedBy: "Bob", DateCreated: "2026-01-01" });
 assert.strictEqual(note.text, "hello");
 console.log("PASS: toCompactNote");
+
+// buildTradeFilter
+assert.strictEqual(buildTradeFilter({}), undefined, "no name -> no filter");
+assert.strictEqual(buildTradeFilter({ name: "plumb" }), "contains(Name,'plumb')");
+console.log("PASS: buildTradeFilter");
+
+// toCompactTrade
+const trade = toCompactTrade({ Id: 1, Name: "PLUMBING", SubscriberId: 123 });
+assert.deepStrictEqual(trade, { id: 1, name: "PLUMBING" }, "SubscriberId is dropped, not just Id/Name kept");
+console.log("PASS: toCompactTrade");
 
 console.log("\nAll unit checks passed.");

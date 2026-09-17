@@ -8,10 +8,9 @@ Batch added 2026-09-16, live-verified against the real SB2 `$metadata` and API b
 
 **Prioritized 2026-09-16** on three axes: confirmed feasibility (live-verified with real data > callable but untested against data > design unverified), value against triage questions this tool already exists to answer, and effort relative to patterns already in the codebase. This ordering isn't fixed — re-prioritize whenever new evidence (real proposal/RFP data lands in the sandbox, a location-rollup spike gets run, etc.) changes any of those three inputs.
 
-### Now — small, fully proven, closes a felt gap
+### Now
 
-- **Surface invoice info on work orders** — add an `invoice` field to `get_work_order`/`search_work_orders` via `$expand=Invoice` (confirmed live and null-safe — returns `Invoice: null` cleanly when none exists). Smallest possible lift: same `$select`/`$expand`/mapper pattern already used for `provider`, no new tool, no new request shape.
-- **`search_trades`** — standalone `/v3/odata/trades` confirmed live with real data (e.g. `"GENERAL MAINTENANCE"`). Closes an already-felt gap: `search_work_orders`'s `trade`/`category` filters currently require the caller to already know the exact string, with no way to discover valid values first — same role `search_locations` already plays for `locationId`. Same effort tier as the invoice item: one new tool, but it's a near-exact copy of `search_locations`'s existing shape.
+_(empty — both items shipped in v0.3.0, see Shipped below)_
 
 ### Next — proven with real data, more design surface than "Now"
 
@@ -35,6 +34,11 @@ Batch added 2026-09-16, live-verified against the real SB2 `$metadata` and API b
 _(nothing currently queued for a specific next version)_
 
 ## Shipped
+
+### v0.3.0 (2026-09-16)
+- Surface invoice info on work orders — `invoice: {id, number, status, total, balance, invoiceDate, paidDate} | null` added to both `search_work_orders` and `get_work_order` via `$expand=Invoice`
+- `search_trades` — new tool, resolves a fuzzy trade name to the exact string `search_work_orders`' `trade`/`category` filters need
+- Bonus finding while shipping the above: nested `$expand(...)($select=...)` works on this API — `Provider` is now also trimmed down to only its used fields (not just `Invoice`), further cutting payload size beyond the outer `$select` alone
 
 ### v0.2.0 (2026-09-16)
 - Expose `tradeId`, `priorityId`, `category`, `categoryId` on both work-order tools (already fetched from the API, previously unmapped)
@@ -61,7 +65,7 @@ Not new capability — maintenance/quality items surfaced while building or rese
 ### Resolved (2026-09-16)
 
 - **~~Generalize the parens-broken/`$filter=Id eq` workaround.~~** Re-scoped on inspection: it's currently used at exactly one real call site (`buildLocationFilter`) — `providers` has no working directory at all (see Rejected), so there's no second live implementation to deduplicate against yet. Building a shared helper for one call site would be an abstraction with a single implementation. Resolved by decision instead: left a code comment at that call site pointing future entities (invoices, once built) at the same one-line pattern. Actually extract a helper the second time it's needed, not before.
-- **~~No `$select` on any existing call.~~** Done. `WORKORDER_SELECT`/`LOCATION_SELECT`/`NOTE_SELECT` constants added in `sc-client.ts`, co-located with each `toCompact*` mapper, wired into every `apiFetch` call in both `src/index.ts` and `test.ts`. Measured a real 59% payload reduction on a 5-row work-order page (16,113 → 6,532 bytes) before shipping.
+- **~~No `$select` on any existing call.~~** Done. `WORKORDER_SELECT`/`LOCATION_SELECT`/`NOTE_SELECT`/`TRADE_SELECT` constants added in `sc-client.ts`, co-located with each `toCompact*` mapper, wired into every `apiFetch` call in both `src/index.ts` and `test.ts`. Measured a real 59% payload reduction on a 5-row work-order page (16,113 → 6,532 bytes) before shipping. Extended further in v0.3.0: `WORKORDER_EXPAND` now uses nested `$expand(...)($select=...)` to trim `Provider`/`Invoice` down to only their used fields too, not just the outer work-order object.
 - **~~`test.ts` fixture-override inconsistency.~~** Resolved by decision, not by code: added a header comment in `test.ts` explaining that hardcoded sandbox fixtures are deliberate (stable enough records that env-var plumbing per fixture would be pure ceremony), and why `SC_TEST_WORKORDER_ID` is the one exception (it needs *some* real ID, not a specific one with specific data).
 - **~~No linting/formatting config.~~** Done. ESLint 10 (`typescript-eslint` recommended) + Prettier 3 added, `npm run lint`/`format`/`format:check` scripts, both wired into CI. `@typescript-eslint/no-explicit-any` explicitly disabled (documented reason in `eslint.config.js`) rather than flagging the ~9 intentional `any` usages on raw API responses. `printWidth: 120` (not the 80 default) to keep the one-time adoption reformat low-churn against this codebase's existing style.
 - **~~No CI coverage of the live-dependent logic.~~** Partially resolved: the *pure* logic (filter/orderby builders, response mappers) now has real coverage in CI via the new `unit.test.ts` + `npm run test:unit`, using placeholder env vars so no real credentials are needed. What's still true and unresolved: the *live* API-calling logic (`apiFetch`, `fetchToken`, and real filtering/sorting/pagination behavior against real data) still can't run in CI without exposing real credentials, and still doesn't.
@@ -69,4 +73,4 @@ Not new capability — maintenance/quality items surfaced while building or rese
 ### Open
 
 - **No response-size/truncation safeguard.** Still not a problem today — no shipped tool currently produces unbounded output. Explicitly **not** built yet (deliberately deferred, not missed): the `get_work_order_assets`/`get_work_order_context` items in Proposed above are what will actually need this (a work order with 60 assets was found live). Build it when one of those ships, not speculatively ahead of them.
-- **`test.ts` as one growing file.** Less urgent than it was — the pure-function tests split out into their own `unit.test.ts` this session, so `test.ts` itself only grows with genuinely new *live* behavior now. Still fine at 9 checks; revisit a split-by-tool convention if it approaches ~15–20.
+- **`test.ts` as one growing file.** Less urgent than it was — the pure-function tests split out into their own `unit.test.ts` this session, so `test.ts` itself only grows with genuinely new *live* behavior now. Still fine at 11 checks; revisit a split-by-tool convention if it approaches ~15–20.

@@ -4,12 +4,16 @@ import {
   buildFilter,
   buildLocationFilter,
   buildOrderBy,
+  buildTradeFilter,
   toCompactWorkOrder,
   toCompactLocation,
   toCompactNote,
+  toCompactTrade,
   WORKORDER_SELECT,
+  WORKORDER_EXPAND,
   LOCATION_SELECT,
   NOTE_SELECT,
+  TRADE_SELECT,
 } from "./src/sc-client.js";
 
 // Fixture convention: most values below (work order/provider/location names,
@@ -34,7 +38,7 @@ async function main() {
   const searchResult = await apiFetch("/v3/odata/workorders", {
     ...(filter ? { $filter: filter } : {}),
     $select: WORKORDER_SELECT,
-    $expand: "Provider",
+    $expand: WORKORDER_EXPAND,
     $top: "5",
   });
   const searchLatency = Date.now() - t1;
@@ -52,7 +56,10 @@ async function main() {
   assert.ok(testId, "need a work order id to test get_work_order (set SC_TEST_WORKORDER_ID or have search results)");
 
   const t2 = Date.now();
-  const raw = await apiFetch(`/v3/odata/workorders(${testId})`, { $select: WORKORDER_SELECT, $expand: "Provider" });
+  const raw = await apiFetch(`/v3/odata/workorders(${testId})`, {
+    $select: WORKORDER_SELECT,
+    $expand: WORKORDER_EXPAND,
+  });
   const getLatency = Date.now() - t2;
   const wo = toCompactWorkOrder(raw);
   assert.strictEqual(wo.id, testId, "get_work_order should return the requested id");
@@ -67,7 +74,7 @@ async function main() {
   const providerResult = await apiFetch("/v3/odata/workorders", {
     $filter: providerFilter!,
     $select: WORKORDER_SELECT,
-    $expand: "Provider",
+    $expand: WORKORDER_EXPAND,
     $top: "3",
   });
   const providerLatency = Date.now() - t4;
@@ -104,7 +111,7 @@ async function main() {
   const categoryResult = await apiFetch("/v3/odata/workorders", {
     $filter: categoryFilter!,
     $select: WORKORDER_SELECT,
-    $expand: "Provider",
+    $expand: WORKORDER_EXPAND,
     $top: "5",
   });
   const categoryLatency = Date.now() - t5;
@@ -125,7 +132,7 @@ async function main() {
   const sortResult = await apiFetch("/v3/odata/workorders", {
     $orderby: orderBy!,
     $select: WORKORDER_SELECT,
-    $expand: "Provider",
+    $expand: WORKORDER_EXPAND,
     $top: "10",
   });
   const sortLatency = Date.now() - t6;
@@ -164,6 +171,34 @@ async function main() {
     "every note should have non-empty text and createdBy",
   );
   console.log(`PASS: get_work_order_notes(355703118) returned ${notes.length} notes (${notesLatency}ms)`);
+
+  const t9 = Date.now();
+  const invoiceRaw = await apiFetch(`/v3/odata/workorders(357049342)`, {
+    $select: WORKORDER_SELECT,
+    $expand: WORKORDER_EXPAND,
+  });
+  const invoiceLatency = Date.now() - t9;
+  const invoiceWo = toCompactWorkOrder(invoiceRaw);
+  assert.ok(invoiceWo.invoice !== null, "known invoiced work order should return a non-null invoice");
+  assert.ok(
+    typeof invoiceWo.invoice!.id === "number" && invoiceWo.invoice!.status,
+    "invoice should be a well-formed {id, status, ...} object",
+  );
+  console.log(
+    `PASS: get_work_order(357049342) invoice=${invoiceWo.invoice!.status} total=${invoiceWo.invoice!.total} (${invoiceLatency}ms)`,
+  );
+
+  const t10 = Date.now();
+  const tradeFilter = buildTradeFilter({ name: "maint" });
+  const tradeResult = await apiFetch("/v3/odata/trades", { $filter: tradeFilter!, $select: TRADE_SELECT, $top: "10" });
+  const tradeLatency = Date.now() - t10;
+  const trades = (tradeResult.value ?? []).map(toCompactTrade);
+  assert.ok(trades.length > 0, "search_trades fuzzy name match should find at least one result");
+  assert.ok(
+    trades.every((t: { id: number; name: string }) => typeof t.id === "number" && t.name),
+    "each trade needs id + name",
+  );
+  console.log(`PASS: search_trades name='maint' returned ${trades.length} results (${tradeLatency}ms)`);
 
   console.log("\nAll checks passed.");
 }

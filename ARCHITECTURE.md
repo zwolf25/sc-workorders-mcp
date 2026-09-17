@@ -2,11 +2,11 @@
 
 A local, read-only MCP (Model Context Protocol) server that lets an LLM query ServiceChannel work orders and locations through natural-language tool calls, instead of the LLM constructing raw API requests itself.
 
-**Status:** working prototype, not a production integration. Built to answer one question for a larger platform business case: what does a real workflow against ServiceChannel's API actually cost in latency and tokens? It is deliberately small — two data types, four tools, no writes.
+**Status:** working prototype, not a production integration. Built to answer one question for a larger platform business case: what does a real workflow against ServiceChannel's API actually cost in latency and tokens? It is deliberately small — three data types, five tools, no writes.
 
 ## What it does
 
-Four MCP tools, all read-only:
+Five MCP tools, all read-only:
 
 | Tool | Input | Output |
 |---|---|---|
@@ -14,10 +14,11 @@ Four MCP tools, all read-only:
 | `get_work_order` | `workOrderId` (required) | one work order object |
 | `get_work_order_notes` | `workOrderId` (required) | `{ count, notes: [...] }` |
 | `search_locations` | `locationId`, `name`, `storeId`, `city`, `state`, `maxResults` (all optional) | `{ count, locations: [...] }` |
+| `search_trades` | `name`, `maxResults` (all optional) | `{ count, trades: [...] }` |
 
-Both work-order tools (`search_work_orders`, `get_work_order`) include the assigned `provider` (`{id, name, contactName, phone, email}`, or `null` if unassigned), plus `tradeId`/`priorityId`/`category`/`categoryId`, on every result — see the `$expand` note below. `search_work_orders` supports paging (`offset`, capped `maxResults`) and sorting (`sortBy`/`sortOrder`) — see [Pagination and sorting](#pagination-and-sorting).
+Both work-order tools (`search_work_orders`, `get_work_order`) include the assigned `provider` (`{id, name, contactName, phone, email}`, or `null` if unassigned) and `invoice` (`{id, number, status, total, balance, invoiceDate, paidDate}`, or `null` if none), plus `tradeId`/`priorityId`/`category`/`categoryId`, on every result — see the `$expand` note below. `search_work_orders` supports paging (`offset`, capped `maxResults`) and sorting (`sortBy`/`sortOrder`) — see [Pagination and sorting](#pagination-and-sorting).
 
-`search_locations` exists so an agent can resolve a location it only knows by name (e.g. "Main Street Store") into the numeric `locationId` the other two tools require — see [Design decisions](#design-decisions) for why it also serves as the single-location "get" endpoint.
+`search_locations` exists so an agent can resolve a location it only knows by name (e.g. "Main Street Store") into the numeric `locationId` the other tools require — see [Design decisions](#design-decisions) for why it also serves as the single-location "get" endpoint. `search_trades` plays the same discovery role for `search_work_orders`' `trade` filter, which requires an exact string match with no other way to know valid values in advance.
 
 ## How it works, end to end
 
@@ -85,7 +86,7 @@ Using `search_work_orders` as the example (`get_work_order` and `search_location
    - `contains(Provider/Name,'acme')`
 
    Clauses are joined with `and`. Any field not on the list is simply not representable — this is what makes it safe to expose to an LLM. `search_work_orders` separately calls `buildOrderBy()` for the `$orderby` clause, using the same whitelist principle (see [Pagination and sorting](#pagination-and-sorting)).
-3. `apiFetch()` gets a valid token (cached or freshly fetched), builds the full URL (`{API_BASE_URL}/v3/odata/workorders?$filter=...&$orderby=...&$select=...&$expand=Provider&$top=...&$skip=...&$count=true`), and issues the GET. `$expand=Provider` is required on every work-order call — `Provider` is an OData navigation property, not a plain field, so it's simply absent from the response without it (see quirk below). `$select` is always the exact field list `toCompactWorkOrder` actually reads (`WORKORDER_SELECT` in `sc-client.ts`, kept next to the mapper on purpose) — confirmed to cut real payload size by ~59% on a 5-row page, and composes cleanly with `$expand`.
+3. `apiFetch()` gets a valid token (cached or freshly fetched), builds the full URL (`{API_BASE_URL}/v3/odata/workorders?$filter=...&$orderby=...&$select=...&$expand=Provider($select=...),Invoice($select=...)&$top=...&$skip=...&$count=true`), and issues the GET. `$expand` is required on every work-order call for both `Provider` and `Invoice` — both are OData navigation properties, not plain fields, so they're simply absent from the response without it (see quirk below). `$select` is always the exact field list `toCompactWorkOrder` actually reads (`WORKORDER_SELECT` in `sc-client.ts`, kept next to the mapper on purpose); the nested `$select` inside each `$expand()` term does the same trimming one level down (confirmed live: composes cleanly, e.g. trims `Provider` from ~28 fields to the 5 `toCompactWorkOrder` reads). Both together are `WORKORDER_EXPAND`, also kept next to the mapper.
 4. Response handling:
    - `401` → clear the token cache and retry **once** with a fresh token; a second `401` is a hard failure.
    - `429` → throw immediately with the `Retry-After` header value in the message. No automatic backoff/retry loop — this is a prototype, not a production client.
@@ -116,7 +117,7 @@ sc-workorders-mcp/
 ├── .env.example           # committed, empty values — documents required config
 ├── .env                   # gitignored, real sandbox credentials (local only)
 ├── src/
-│   ├── index.ts            # McpServer setup, all 4 tool registrations, stdio entrypoint
+│   ├── index.ts            # McpServer setup, all 5 tool registrations, stdio entrypoint
 │   └── sc-client.ts        # auth, token cache, apiFetch, filter builders, response shapers, $select constants
 ├── test.ts                 # live integration smoke test, runs against the LIVE sandbox API (no mocks)
 └── unit.test.ts             # pure-function tests (buildFilter, buildOrderBy, toCompact*) — no credentials, no network, CI-safe
@@ -151,6 +152,7 @@ These were discovered by live trial against the SB2 sandbox and aren't obvious f
 - **`contains()` is case-insensitive** on at least `Name` and `Address2` — confirmed by searching `'Maple'` and matching a record containing lowercase `'maple'`. This is what makes `search_locations`'s fuzzy name match usable without any client-side fuzzy-matching library.
 - **`Trade` and `Priority` are display strings**, each paired with a separate `*Id` integer field (`TradeId`, `PriorityId`) that this server doesn't currently expose.
 - **`Provider` (the assigned vendor) is an OData navigation property, not a plain field** — checked via the `$metadata` document (`<NavigationProperty Name="Provider" Type="...Provider" />` on the `WorkOrder` entity type). A plain query for a work order simply omits it entirely; it only appears with `$expand=Provider` added to the request, on both the list endpoint and the `(id)` single-item endpoint (both confirmed live). Filtering on the expanded field also works: `Provider/Id eq {id}` for exact match, `contains(Provider/Name,'x')` for fuzzy — and like `Name`/`Address2` on locations, this `contains()` is case-insensitive too (confirmed: filtering `'acme'` matched a provider named `ACME REFRIGERATION CO`). The nested `Provider` object's contact-name field is called `MainContact`, not `ContactName` or similar — easy to guess wrong.
+- **`Invoice` is the same pattern as `Provider`, and composes with it.** Also a navigation property (singular, one invoice per work order — `null` when uninvoiced), requires `$expand=Invoice`, works on both list and single-item endpoints. Confirmed live with a real linked record (work order `357049342` → invoice `175688826`). `$expand=Provider,Invoice` in one request returns both correctly — this API doesn't choke on multiple navigation properties in the same `$expand`, unlike some of its other rough edges. **Bonus finding: nested `$expand(...)($select=...)` works too** — `$expand=Provider($select=Id,Name,...),Invoice($select=Id,Number,...)` trims each expanded object down to only the fields actually used, confirmed live and composing cleanly with a `$select` on the outer work-order fields at the same time. Worth checking for any future `$expand`, not just these two.
 - Several date fields (`CreatedDate`, `ScheduledDate`, etc.) come paired with a `*_DTO` variant carrying the same value at higher precision — safely ignorable.
 - **No `@odata.nextLink` is ever returned**, even when `$count=true` reports far more matches than `$top` returned (confirmed with a filter matching 4,363 rows against `$top=5`). `$skip` itself works correctly (confirmed: `$skip=5` returns a genuinely different, non-overlapping continuation of the same ordering) and `$count=true` does return a real `@odata.count` — but "are there more results" has to be computed client-side (`offset + returned-count < totalCount`), not read off a link the server provides. `search_work_orders`'s `hasMore` field is exactly that client-side computation.
 - **`$expand=notes` is broken** on both `/v3/odata/workorders` and `/v3/odata/workorders({id})` — it fails server-side with `"The member 'WorkOrder.NotesCollection' has no supported translation to SQL"` (or a bare `HTTP 500` on the list endpoint with a filter). The only way to actually fetch a work order's notes is the sub-resource path `GET /v3/odata/workorders({id})/notes` directly, with no `$expand` involved at all — confirmed live, returns the full note collection cleanly. This is why `get_work_order_notes` is a separate tool/request rather than a field folded into `get_work_order`.
@@ -164,7 +166,7 @@ These were discovered by live trial against the SB2 sandbox and aren't obvious f
 - **No persistent token storage, no refresh-token flow.** The access token lives in a module-level variable and is re-fetched via password grant on expiry. Acceptable for a single local process; would need real credential handling for anything shared or long-lived.
 - **Compact response shape over raw passthrough.** Every tool reshapes ServiceChannel's native response before returning it, trading completeness (e.g. `Notes`' verbose sub-fields aren't all exposed) for a smaller, stable, predictable schema — the right tradeoff for token cost and for shielding the LLM from upstream schema churn.
 - **`hasMore` and hardcoded whitelist maps over generic pass-through.** Both `buildOrderBy`'s field whitelist and `search_work_orders`'s `hasMore` computation exist because the underlying API doesn't provide either directly (no `$orderby`-safe way to accept a raw field name from an LLM; no `@odata.nextLink`) — this is the same whitelist-and-reshape philosophy as `buildFilter`, applied to two more gaps the raw API leaves open.
-- **`$select` constants live next to their `toCompact*` mapper, not centralized.** `WORKORDER_SELECT`/`LOCATION_SELECT`/`NOTE_SELECT` are exported right beside the function that consumes their shape, with a comment saying so explicitly — the field lists have to stay in sync, and co-location is what makes "I added a field to the mapper but forgot the `$select`" an easy mistake to *notice*, not just an easy mistake to *avoid*.
+- **`$select`/`$expand` constants live next to their `toCompact*` mapper, not centralized.** `WORKORDER_SELECT`/`WORKORDER_EXPAND`/`LOCATION_SELECT`/`NOTE_SELECT`/`TRADE_SELECT` are exported right beside the function that consumes their shape, with a comment saying so explicitly — the field lists have to stay in sync, and co-location is what makes "I added a field to the mapper but forgot the `$select`" an easy mistake to *notice*, not just an easy mistake to *avoid*. `WORKORDER_EXPAND` bundles the nested `$select` for both `Provider` and `Invoice` in one constant since they're always fetched together.
 - **No shared helper for the parens-broken/`$filter=Id eq {id}` workaround, despite it recurring.** It's used today only in `buildLocationFilter`; a shared `getByIdViaFilter()` for one real call site would be an abstraction with a single implementation. Instead, the one existing call site carries a comment pointing future entities (invoices is a known future one, see `BACKLOG.md`) at the same one-line pattern. Revisit this decision — and actually extract a helper — the second time an entity needs it, not before.
 - **Lint/format tooling added once the codebase had enough surface for style drift to matter, not from day one.** ESLint 10 (`typescript-eslint` recommended config) and Prettier 3 were added together; `@typescript-eslint/no-explicit-any` is explicitly turned off rather than left to flag the ~9 intentional `any` usages on raw API responses (that's a deliberate choice documented above, not an oversight — silencing the rule that would fight a deliberate pattern is more honest than leaving noisy warnings nobody will act on). Prettier's `printWidth` is set to 120, not the 80 default, matching this codebase's existing line-length habits (long chained `.describe()` calls, wide `$select` constants) — the goal was a one-time, low-churn adoption reformat, not fighting the existing style. `.prettierignore` scopes Prettier to source files only; running it over `*.md`/`package.json` would reformat prose and JSON key ordering that has nothing to do with code style.
 
@@ -186,7 +188,7 @@ Writes/mutations of any kind, multi-tenant support, a policy/approval engine, an
 
 Two independent scripts, deliberately kept separate rather than merged into one file:
 
-**`npm test`** — `tsc` then `node --env-file=.env dist/test.js`. Live integration checks (`test.ts`), nine of them, all against the real SB2 API, no mocking, requiring real credentials and real sandbox data:
+**`npm test`** — `tsc` then `node --env-file=.env dist/test.js`. Live integration checks (`test.ts`), eleven of them, all against the real SB2 API, no mocking, requiring real credentials and real sandbox data:
 
 1. Token fetch + a basic list call succeeds.
 2. `search_work_orders` respects `maxResults` and each result has an `id` + `status`.
@@ -197,9 +199,11 @@ Two independent scripts, deliberately kept separate rather than merged into one 
 7. `search_work_orders` sorted `createdDate desc` returns results in genuinely non-increasing order.
 8. Pagination: two `$skip=0`/`$skip=5` pages don't overlap on `id`, and `@odata.count` reports a sane total.
 9. `get_work_order_notes` against a known multi-note work order (`355703118`, 9 notes) returns more than one note, each with non-empty `text`/`createdBy`.
+10. `get_work_order` against a known invoiced work order (`357049342`) returns a non-null `invoice` with a well-formed `{id, status, ...}` shape.
+11. `search_trades` fuzzy-matches a known trade name and each result has an `id` + `name`.
 
 Each check also logs its latency — this is the actual point of the prototype: real numbers for the business case, not just pass/fail. **Cannot run in CI** — needs real credentials.
 
-**`npm run test:unit`** — `tsc` then `node dist/unit.test.js`. Pure-function checks (`unit.test.ts`) for `buildFilter`, `buildLocationFilter`, `buildOrderBy`, and every `toCompact*` mapper: whitelist behavior, OData string-escaping, null/undefined-safety on missing fields. No network calls, no credentials — it sets placeholder `SC_*` env vars via a dynamic `import()` (a static import would run before the placeholders are set, since ES module imports are hoisted) purely to satisfy `sc-client.ts`'s fail-fast startup check, then never touches the network. **This is the one that runs in CI.**
+**`npm run test:unit`** — `tsc` then `node dist/unit.test.js`. Pure-function checks (`unit.test.ts`) for `buildFilter`, `buildLocationFilter`, `buildOrderBy`, `buildTradeFilter`, and every `toCompact*` mapper: whitelist behavior, OData string-escaping, null/undefined-safety on missing fields. No network calls, no credentials — it sets placeholder `SC_*` env vars via a dynamic `import()` (a static import would run before the placeholders are set, since ES module imports are hoisted) purely to satisfy `sc-client.ts`'s fail-fast startup check, then never touches the network. **This is the one that runs in CI.**
 
 **CI** (`.github/workflows/build.yml`) runs, on every push/PR: `npm run build`, `npm run lint` (ESLint), `npm run format:check` (Prettier), and `npm run test:unit` — everything that doesn't need live credentials. The live suite stays a local-only, manually-run check.
