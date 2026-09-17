@@ -85,7 +85,7 @@ Using `search_work_orders` as the example (`get_work_order` and `search_location
    - `contains(Provider/Name,'acme')`
 
    Clauses are joined with `and`. Any field not on the list is simply not representable — this is what makes it safe to expose to an LLM. `search_work_orders` separately calls `buildOrderBy()` for the `$orderby` clause, using the same whitelist principle (see [Pagination and sorting](#pagination-and-sorting)).
-3. `apiFetch()` gets a valid token (cached or freshly fetched), builds the full URL (`{API_BASE_URL}/v3/odata/workorders?$filter=...&$orderby=...&$expand=Provider&$top=...&$skip=...&$count=true`), and issues the GET. `$expand=Provider` is required on every work-order call — `Provider` is an OData navigation property, not a plain field, so it's simply absent from the response without it (see quirk below).
+3. `apiFetch()` gets a valid token (cached or freshly fetched), builds the full URL (`{API_BASE_URL}/v3/odata/workorders?$filter=...&$orderby=...&$select=...&$expand=Provider&$top=...&$skip=...&$count=true`), and issues the GET. `$expand=Provider` is required on every work-order call — `Provider` is an OData navigation property, not a plain field, so it's simply absent from the response without it (see quirk below). `$select` is always the exact field list `toCompactWorkOrder` actually reads (`WORKORDER_SELECT` in `sc-client.ts`, kept next to the mapper on purpose) — confirmed to cut real payload size by ~59% on a 5-row page, and composes cleanly with `$expand`.
 4. Response handling:
    - `401` → clear the token cache and retry **once** with a fresh token; a second `401` is a hard failure.
    - `429` → throw immediately with the `Retry-After` header value in the message. No automatic backoff/retry loop — this is a prototype, not a production client.
@@ -109,16 +109,20 @@ Sorting goes through `buildOrderBy(sortBy, sortOrder)` in `sc-client.ts` — a s
 ```
 sc-workorders-mcp/
 ├── package.json          # deps: @modelcontextprotocol/sdk, zod. No axios — native fetch (Node 20+) is enough.
-├── tsconfig.json          # rootDir "." so it compiles both src/ and the root-level test.ts
+├── tsconfig.json          # rootDir "." so it compiles src/, test.ts, and unit.test.ts together
+├── eslint.config.js       # ESLint 10 flat config, typescript-eslint recommended + one override (see Design decisions)
+├── .prettierrc.json       # printWidth 120, not the 80 default — see Design decisions
+├── .prettierignore        # scopes Prettier to source files only, not *.md/package.json
 ├── .env.example           # committed, empty values — documents required config
 ├── .env                   # gitignored, real sandbox credentials (local only)
 ├── src/
 │   ├── index.ts            # McpServer setup, all 4 tool registrations, stdio entrypoint
-│   └── sc-client.ts        # auth, token cache, apiFetch, filter builders, response shapers
-└── test.ts                 # single smoke test, runs against the LIVE sandbox API (no mocks)
+│   └── sc-client.ts        # auth, token cache, apiFetch, filter builders, response shapers, $select constants
+├── test.ts                 # live integration smoke test, runs against the LIVE sandbox API (no mocks)
+└── unit.test.ts             # pure-function tests (buildFilter, buildOrderBy, toCompact*) — no credentials, no network, CI-safe
 ```
 
-Build output goes to `dist/`, mirroring the source layout as `dist/src/index.js` and `dist/test.js` — note `main`/`start` in `package.json` point at `dist/src/index.js`, not `dist/index.js`, because `test.ts` living at the project root (not under `src/`) forces `rootDir` to be `.` rather than `./src`.
+Build output goes to `dist/`, mirroring the source layout as `dist/src/index.js`, `dist/test.js`, and `dist/unit.test.js` — note `main`/`start` in `package.json` point at `dist/src/index.js`, not `dist/index.js`, because `test.ts`/`unit.test.ts` living at the project root (not under `src/`) forces `rootDir` to be `.` rather than `./src`.
 
 ## Configuration
 
@@ -160,6 +164,9 @@ These were discovered by live trial against the SB2 sandbox and aren't obvious f
 - **No persistent token storage, no refresh-token flow.** The access token lives in a module-level variable and is re-fetched via password grant on expiry. Acceptable for a single local process; would need real credential handling for anything shared or long-lived.
 - **Compact response shape over raw passthrough.** Every tool reshapes ServiceChannel's native response before returning it, trading completeness (e.g. `Notes`' verbose sub-fields aren't all exposed) for a smaller, stable, predictable schema — the right tradeoff for token cost and for shielding the LLM from upstream schema churn.
 - **`hasMore` and hardcoded whitelist maps over generic pass-through.** Both `buildOrderBy`'s field whitelist and `search_work_orders`'s `hasMore` computation exist because the underlying API doesn't provide either directly (no `$orderby`-safe way to accept a raw field name from an LLM; no `@odata.nextLink`) — this is the same whitelist-and-reshape philosophy as `buildFilter`, applied to two more gaps the raw API leaves open.
+- **`$select` constants live next to their `toCompact*` mapper, not centralized.** `WORKORDER_SELECT`/`LOCATION_SELECT`/`NOTE_SELECT` are exported right beside the function that consumes their shape, with a comment saying so explicitly — the field lists have to stay in sync, and co-location is what makes "I added a field to the mapper but forgot the `$select`" an easy mistake to *notice*, not just an easy mistake to *avoid*.
+- **No shared helper for the parens-broken/`$filter=Id eq {id}` workaround, despite it recurring.** It's used today only in `buildLocationFilter`; a shared `getByIdViaFilter()` for one real call site would be an abstraction with a single implementation. Instead, the one existing call site carries a comment pointing future entities (invoices is a known future one, see `BACKLOG.md`) at the same one-line pattern. Revisit this decision — and actually extract a helper — the second time an entity needs it, not before.
+- **Lint/format tooling added once the codebase had enough surface for style drift to matter, not from day one.** ESLint 10 (`typescript-eslint` recommended config) and Prettier 3 were added together; `@typescript-eslint/no-explicit-any` is explicitly turned off rather than left to flag the ~9 intentional `any` usages on raw API responses (that's a deliberate choice documented above, not an oversight — silencing the rule that would fight a deliberate pattern is more honest than leaving noisy warnings nobody will act on). Prettier's `printWidth` is set to 120, not the 80 default, matching this codebase's existing line-length habits (long chained `.describe()` calls, wide `$select` constants) — the goal was a one-time, low-churn adoption reformat, not fighting the existing style. `.prettierignore` scopes Prettier to source files only; running it over `*.md`/`package.json` would reformat prose and JSON key ordering that has nothing to do with code style.
 
 ## Explicitly out of scope
 
@@ -171,12 +178,15 @@ Writes/mutations of any kind, multi-tenant support, a policy/approval engine, an
 2. `npm init`, add `@modelcontextprotocol/sdk` and `zod` as dependencies, TypeScript + `@types/node` as dev dependencies. Target Node ≥20.6 for built-in `fetch` and `--env-file`.
 3. Write a token-cache + `apiFetch` wrapper first, in isolation, and prove it against the real API with a throwaway script before touching MCP at all — auth quirks (redirects instead of errors, sandbox-vs-prod client scoping) are much easier to debug outside the MCP protocol layer.
 4. Once raw API access works, build one Zod-validated MCP tool end to end (schema → filter builder → API call → response shaping → `registerTool`), verify it live, then repeat for the next tool.
-5. Write one smoke test (`test.ts`) that hits the live API with no mocking — for an integration this thin, a mocked test would mostly test the mock.
+5. Write one smoke test (`test.ts`) that hits the live API with no mocking — for an integration this thin, a mocked test would mostly test the mock. Once the pure logic (filter/orderby builders, response mappers) is non-trivial enough to be worth checking in CI, split those into a separate no-credentials `unit.test.ts` rather than trying to make the live test CI-safe.
 6. Wire into Claude Code with `claude mcp add <name> -s user -e KEY=value ... -- node /absolute/path/to/dist/.../index.js` (user scope so it's available in any future session, not just one project directory).
+7. Add ESLint + Prettier once there's enough surface for style drift to matter — not from day one. Set `printWidth` to match whatever line-length habits already exist rather than the 80-char default, to keep the adoption reformat a one-time, low-churn event.
 
 ## Testing
 
-`npm test` runs `tsc` then `node --env-file=.env dist/test.js` — a single script (`test.ts`) with nine checks, all against the live SB2 API:
+Two independent scripts, deliberately kept separate rather than merged into one file:
+
+**`npm test`** — `tsc` then `node --env-file=.env dist/test.js`. Live integration checks (`test.ts`), nine of them, all against the real SB2 API, no mocking, requiring real credentials and real sandbox data:
 
 1. Token fetch + a basic list call succeeds.
 2. `search_work_orders` respects `maxResults` and each result has an `id` + `status`.
@@ -188,4 +198,8 @@ Writes/mutations of any kind, multi-tenant support, a policy/approval engine, an
 8. Pagination: two `$skip=0`/`$skip=5` pages don't overlap on `id`, and `@odata.count` reports a sane total.
 9. `get_work_order_notes` against a known multi-note work order (`355703118`, 9 notes) returns more than one note, each with non-empty `text`/`createdBy`.
 
-Each check also logs its latency — this is the actual point of the prototype: real numbers for the business case, not just pass/fail.
+Each check also logs its latency — this is the actual point of the prototype: real numbers for the business case, not just pass/fail. **Cannot run in CI** — needs real credentials.
+
+**`npm run test:unit`** — `tsc` then `node dist/unit.test.js`. Pure-function checks (`unit.test.ts`) for `buildFilter`, `buildLocationFilter`, `buildOrderBy`, and every `toCompact*` mapper: whitelist behavior, OData string-escaping, null/undefined-safety on missing fields. No network calls, no credentials — it sets placeholder `SC_*` env vars via a dynamic `import()` (a static import would run before the placeholders are set, since ES module imports are hoisted) purely to satisfy `sc-client.ts`'s fail-fast startup check, then never touches the network. **This is the one that runs in CI.**
+
+**CI** (`.github/workflows/build.yml`) runs, on every push/PR: `npm run build`, `npm run lint` (ESLint), `npm run format:check` (Prettier), and `npm run test:unit` — everything that doesn't need live credentials. The live suite stays a local-only, manually-run check.

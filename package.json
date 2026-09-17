@@ -15,7 +15,11 @@
   "scripts": {
     "build": "tsc",
     "start": "node --env-file=.env dist/src/index.js",
-    "test": "npm run build && node --env-file=.env dist/test.js"
+    "test": "npm run build && node --env-file=.env dist/test.js",
+    "test:unit": "npm run build && node dist/unit.test.js",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "engines": {
     "node": ">=20.6"
@@ -25,7 +29,11 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^22.10.0",
-    "typescript": "^5.7.2"
+    "eslint": "^10.10.0",
+    "prettier": "^3.9.7",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.70.0"
   }
 }

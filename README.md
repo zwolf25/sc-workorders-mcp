@@ -36,7 +36,7 @@ claude mcp add sc-workorders -s user \
 
 ## Testing
 
-`npm test` runs a live smoke test (`test.ts`) directly against a real ServiceChannel sandbox — no mocking. This means it **requires real credentials and live sandbox data to pass**, and is not runnable in CI as-is (see ARCHITECTURE.md's Testing section for exactly what it checks).
+`npm test` runs a live smoke test (`test.ts`) directly against a real ServiceChannel sandbox — no mocking. This means it **requires real credentials and live sandbox data to pass**, and is not runnable in CI. `npm run test:unit` covers the pure logic (filter builders, response mappers) with no credentials needed — this is the one CI runs, alongside `npm run lint` and `npm run format:check`. See ARCHITECTURE.md's Testing section for exactly what each one checks.
 
 ## Status
 

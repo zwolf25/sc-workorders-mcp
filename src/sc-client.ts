@@ -38,7 +38,7 @@ async function fetchToken(): Promise<string> {
 
   if (res.status >= 300 && res.status < 400) {
     throw new Error(
-      `Auth failed: token endpoint redirected (status ${res.status}). The OAuth client is likely not registered/active in this environment.`
+      `Auth failed: token endpoint redirected (status ${res.status}). The OAuth client is likely not registered/active in this environment.`,
     );
   }
   if (!res.ok) {
@@ -149,6 +149,10 @@ export interface LocationFilters {
 // so a plain substring gives reasonable fuzzy matching without a client-side lib.
 export function buildLocationFilter(f: LocationFilters): string | undefined {
   const clauses: string[] = [];
+  // `Id eq {id}` here is a workaround, not an incidental filter: /locations({id})
+  // (the parens single-item syntax) is broken server-side (see ARCHITECTURE.md's
+  // quirks). Any future entity with the same parens-500 bug (invoices is one,
+  // per BACKLOG.md) should reach for this same `{Field} eq {id}` pattern.
   if (f.locationId) clauses.push(`Id eq ${f.locationId}`);
   if (f.name) clauses.push(`(contains(Name,${odataString(f.name)}) or contains(Address2,${odataString(f.name)}))`);
   if (f.storeId) clauses.push(`StoreId eq ${odataString(f.storeId)}`);
@@ -156,6 +160,10 @@ export function buildLocationFilter(f: LocationFilters): string | undefined {
   if (f.state) clauses.push(`State eq ${odataString(f.state)}`);
   return clauses.length ? clauses.join(" and ") : undefined;
 }
+
+// Kept next to toCompactLocation on purpose: if a field is added to one,
+// it belongs in the other too, or it'll silently come back undefined.
+export const LOCATION_SELECT = "Id,Name,StoreId,Address1,Address2,City,State,Zip,Phone,Contact,Status";
 
 export interface CompactLocation {
   [key: string]: unknown;
@@ -194,6 +202,13 @@ export interface CompactProvider {
   phone: string | null;
   email: string | null;
 }
+
+// Kept next to toCompactWorkOrder on purpose: if a field is added to one,
+// it belongs in the other too, or it'll silently come back undefined.
+// Provider must be in both this list and $expand for the nested object to
+// come back at all (Provider is a navigation property, not a plain field).
+export const WORKORDER_SELECT =
+  "Id,Status,Trade,TradeId,LocationId,Priority,PriorityId,Category,CategoryId,Description,CreatedDate,ScheduledDate,CompletedDate,Provider";
 
 export interface CompactWorkOrder {
   [key: string]: unknown;
@@ -239,6 +254,10 @@ export function toCompactWorkOrder(raw: any): CompactWorkOrder {
       : null,
   };
 }
+
+// Kept next to toCompactNote on purpose: if a field is added to one,
+// it belongs in the other too, or it'll silently come back undefined.
+export const NOTE_SELECT = "Id,Number,NoteData,CreatedBy,DateCreated";
 
 export interface CompactNote {
   id: number;

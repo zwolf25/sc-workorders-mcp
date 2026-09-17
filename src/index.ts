@@ -10,6 +10,9 @@ import {
   toCompactWorkOrder,
   toCompactLocation,
   toCompactNote,
+  WORKORDER_SELECT,
+  LOCATION_SELECT,
+  NOTE_SELECT,
 } from "./sc-client.js";
 
 const server = new McpServer({ name: "sc-workorders-mcp", version: "0.2.0" });
@@ -22,15 +25,39 @@ const SearchInputSchema = z
       .describe("Work order status, e.g. 'OPEN', 'IN PROGRESS', 'COMPLETED' (case-sensitive, exact match)"),
     trade: z.string().optional().describe("Trade label, e.g. 'ALARMS', 'HVAC'"),
     locationId: z.number().int().positive().optional().describe("ServiceChannel location ID"),
-    dateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Created on/after this date, YYYY-MM-DD"),
-    dateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Created on/before this date, YYYY-MM-DD"),
+    dateFrom: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional()
+      .describe("Created on/after this date, YYYY-MM-DD"),
+    dateTo: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional()
+      .describe("Created on/before this date, YYYY-MM-DD"),
     providerId: z.number().int().positive().optional().describe("Exact ServiceChannel provider (vendor) ID"),
     providerName: z.string().optional().describe("Fuzzy match against the assigned provider's name"),
     category: z.string().optional().describe("Work order category, e.g. 'MAINTENANCE', 'REPAIR', 'CAP-EX'"),
-    scheduledDateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Scheduled on/after this date, YYYY-MM-DD"),
-    scheduledDateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Scheduled on/before this date, YYYY-MM-DD"),
-    completedDateFrom: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Completed on/after this date, YYYY-MM-DD"),
-    completedDateTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Completed on/before this date, YYYY-MM-DD"),
+    scheduledDateFrom: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional()
+      .describe("Scheduled on/after this date, YYYY-MM-DD"),
+    scheduledDateTo: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional()
+      .describe("Scheduled on/before this date, YYYY-MM-DD"),
+    completedDateFrom: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional()
+      .describe("Completed on/after this date, YYYY-MM-DD"),
+    completedDateTo: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional()
+      .describe("Completed on/before this date, YYYY-MM-DD"),
     sortBy: z.enum(["createdDate", "scheduledDate", "completedDate"]).optional().describe("Field to sort by"),
     sortOrder: z.enum(["asc", "desc"]).default("desc").describe("Sort direction (only used if sortBy is set)"),
     offset: z.number().int().min(0).default(0).describe("Number of results to skip, for paging past the first page"),
@@ -56,6 +83,7 @@ totalCount is the total number of matching work orders (not just this page); has
     const data = await apiFetch("/v3/odata/workorders", {
       ...(filter ? { $filter: filter } : {}),
       ...(orderBy ? { $orderby: orderBy } : {}),
+      $select: WORKORDER_SELECT,
       $expand: "Provider",
       $top: String(params.maxResults),
       $skip: String(params.offset),
@@ -70,7 +98,7 @@ totalCount is the total number of matching work orders (not just this page); has
       workOrders,
     };
     return { content: [{ type: "text", text: JSON.stringify(output, null, 2) }], structuredContent: output };
-  }
+  },
 );
 
 const GetInputSchema = z
@@ -92,10 +120,13 @@ For the work order's note history, use get_work_order_notes separately — notes
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   async ({ workOrderId }) => {
-    const raw = await apiFetch(`/v3/odata/workorders(${workOrderId})`, { $expand: "Provider" });
+    const raw = await apiFetch(`/v3/odata/workorders(${workOrderId})`, {
+      $select: WORKORDER_SELECT,
+      $expand: "Provider",
+    });
     const output = toCompactWorkOrder(raw);
     return { content: [{ type: "text", text: JSON.stringify(output, null, 2) }], structuredContent: output };
-  }
+  },
 );
 
 server.registerTool(
@@ -109,11 +140,11 @@ Returns: { count: number, notes: [{ id, number, text, createdBy, createdDate }] 
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   async ({ workOrderId }) => {
-    const data = await apiFetch(`/v3/odata/workorders(${workOrderId})/notes`);
+    const data = await apiFetch(`/v3/odata/workorders(${workOrderId})/notes`, { $select: NOTE_SELECT });
     const notes = (data.value ?? []).map(toCompactNote);
     const output = { count: notes.length, notes };
     return { content: [{ type: "text", text: JSON.stringify(output, null, 2) }], structuredContent: output };
-  }
+  },
 );
 
 const SearchLocationsInputSchema = z
@@ -146,12 +177,13 @@ Returns: { count: number, locations: [{ id, name, storeId, address, city, state,
     const filter = buildLocationFilter(params);
     const data = await apiFetch("/v3/odata/locations", {
       ...(filter ? { $filter: filter } : {}),
+      $select: LOCATION_SELECT,
       $top: String(params.maxResults),
     });
     const locations = (data.value ?? []).map(toCompactLocation);
     const output = { count: locations.length, locations };
     return { content: [{ type: "text", text: JSON.stringify(output, null, 2) }], structuredContent: output };
-  }
+  },
 );
 
 async function main() {
