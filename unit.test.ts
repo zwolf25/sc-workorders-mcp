@@ -19,6 +19,8 @@ const {
   toCompactLocation,
   toCompactNote,
   toCompactTrade,
+  toCompactAsset,
+  toCompactActivity,
 } = await import("./src/sc-client.js");
 
 // buildFilter
@@ -118,5 +120,38 @@ console.log("PASS: buildTradeFilter");
 const trade = toCompactTrade({ Id: 1, Name: "PLUMBING", SubscriberId: 123 });
 assert.deepStrictEqual(trade, { id: 1, name: "PLUMBING" }, "SubscriberId is dropped, not just Id/Name kept");
 console.log("PASS: toCompactTrade");
+
+// toCompactAsset
+const asset = toCompactAsset({ Id: 1, Tag: "A-1", Manufacturer: "Acme", Active: true, LocationId: 9 });
+assert.deepStrictEqual(asset, {
+  id: 1,
+  tag: "A-1",
+  manufacturer: "Acme",
+  modelNo: null,
+  serialNo: null,
+  trade: null,
+  type: null,
+  active: true,
+  locationId: 9,
+});
+const assetSparse = toCompactAsset({ Id: 2 });
+assert.strictEqual(assetSparse.tag, null, "missing descriptive fields default to null, not undefined");
+assert.strictEqual(assetSparse.active, false, "missing Active defaults to false");
+console.log("PASS: toCompactAsset");
+
+// toCompactActivity
+const activity = toCompactActivity({
+  Id: 1,
+  TimeIn: "2026-01-01T09:00:00Z",
+  TimeOut: "2026-01-01T10:00:00Z",
+  User: { FullName: "Jane Doe" },
+  ResolutionCode: "COMPLETE",
+  WorkType: "Repair",
+  TechsCount: 1,
+});
+assert.strictEqual(activity.technician, "Jane Doe", "technician is read from the nested User.FullName");
+const activityNoUser = toCompactActivity({ Id: 2 });
+assert.strictEqual(activityNoUser.technician, null, "a missing User maps technician to null, not a throw");
+console.log("PASS: toCompactActivity");
 
 console.log("\nAll unit checks passed.");

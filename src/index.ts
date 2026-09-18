@@ -12,14 +12,19 @@ import {
   toCompactLocation,
   toCompactNote,
   toCompactTrade,
+  toCompactAsset,
+  toCompactActivity,
   WORKORDER_SELECT,
   WORKORDER_EXPAND,
   LOCATION_SELECT,
   NOTE_SELECT,
   TRADE_SELECT,
+  ASSET_SELECT,
+  ASSET_CAP,
+  ACTIVITY_SELECT,
 } from "./sc-client.js";
 
-const server = new McpServer({ name: "sc-workorders-mcp", version: "0.3.0" });
+const server = new McpServer({ name: "sc-workorders-mcp", version: "0.4.0" });
 
 const SearchInputSchema = z
   .object({
@@ -147,6 +152,52 @@ Returns: { count: number, notes: [{ id, number, text, createdBy, createdDate }] 
     const data = await apiFetch(`/v3/odata/workorders(${workOrderId})/notes`, { $select: NOTE_SELECT });
     const notes = (data.value ?? []).map(toCompactNote);
     const output = { count: notes.length, notes };
+    return { content: [{ type: "text", text: JSON.stringify(output, null, 2) }], structuredContent: output };
+  },
+);
+
+server.registerTool(
+  "get_work_order_assets",
+  {
+    title: "Get Work Order Assets",
+    description: `Fetch the equipment/asset list tied to a ServiceChannel work order by ID. Read-only.
+
+Returns: { count: number, totalCount: number, truncated: boolean, assets: [{ id, tag, manufacturer, modelNo, serialNo, trade, type, active, locationId }] }
+
+totalCount is the work order's real asset count; truncated is true if there were more assets than the ${ASSET_CAP}-item cap returned. Descriptive fields (tag/manufacturer/modelNo/serialNo/trade/type) are frequently null -- asset records aren't always fully filled out.`,
+    inputSchema: GetInputSchema.shape,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async ({ workOrderId }) => {
+    const raw = await apiFetch(`/v3/odata/workorders(${workOrderId})`, {
+      $select: "Id,AssetCount",
+      $expand: `Assets($select=${ASSET_SELECT};$top=${ASSET_CAP})`,
+    });
+    const assets = (raw.Assets ?? []).map(toCompactAsset);
+    const totalCount = raw.AssetCount ?? assets.length;
+    const output = { count: assets.length, totalCount, truncated: totalCount > assets.length, assets };
+    return { content: [{ type: "text", text: JSON.stringify(output, null, 2) }], structuredContent: output };
+  },
+);
+
+server.registerTool(
+  "get_work_order_activities",
+  {
+    title: "Get Work Order Activities",
+    description: `Fetch the technician check-in/check-out activity history for a ServiceChannel work order by ID. Read-only.
+
+Returns: { count: number, activities: [{ id, timeIn, timeOut, technician, resolutionCode, workType, techsCount }] }, oldest first.`,
+    inputSchema: GetInputSchema.shape,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async ({ workOrderId }) => {
+    const data = await apiFetch(`/v3/odata/workorders(${workOrderId})/workactivities`, { $select: ACTIVITY_SELECT });
+    const activities = (data.value ?? [])
+      .map(toCompactActivity)
+      .sort((a: { timeIn: string | null }, b: { timeIn: string | null }) =>
+        (a.timeIn ?? "").localeCompare(b.timeIn ?? ""),
+      );
+    const output = { count: activities.length, activities };
     return { content: [{ type: "text", text: JSON.stringify(output, null, 2) }], structuredContent: output };
   },
 );

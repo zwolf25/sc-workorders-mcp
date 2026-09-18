@@ -10,16 +10,14 @@ Batch added 2026-09-16, live-verified against the real SB2 `$metadata` and API b
 
 ### Now
 
-_(empty — both items shipped in v0.3.0, see Shipped below)_
+_(empty — both items shipped in v0.4.0, see Shipped below)_
 
-### Next — proven with real data, more design surface than "Now"
+### Next
 
-- **`get_work_order_assets`** — via `$expand=Assets` (confirmed live with real data — a work order with `AssetCount: 60` returned full nested asset objects). A dedicated tool, mirroring `get_work_order_notes`'s "separate call, only pay for it when asked" tradeoff. Behind invoice/trades in priority only because a 60-item list makes it the first tool that actually needs the still-open response-size/truncation tech debt item — sequence that decision alongside this, not after shipping it blind.
-- **`get_work_order_activities`** — via the sub-resource path `/workorders({id})/workactivities` (confirmed live, `HTTP 200`, following the exact same broken-`$expand`/working-sub-resource pattern as notes). Ranked just behind assets because the one work order tested had zero activity records — the path works, but real field shapes/value are less proven than notes or assets were.
+- **`get_work_order_context`** (composite tool bundling a work order + notes + assets + invoice in one call) — every underlying piece now exists and is confirmed working (`get_work_order`, `get_work_order_notes`, `get_work_order_assets`, invoice-on-work-order). Promoted from Later now that its dependencies shipped in v0.4.0 — no more sequencing blocker, just the build itself. The truncation question is already resolved (`get_work_order_assets`'s `{count, totalCount, truncated}` shape), so this just needs to compose the existing calls.
 
 ### Later — valuable, but bigger scope or sequenced behind "Now"/"Next"
 
-- **`get_work_order_context`** (composite tool bundling a work order + notes + assets + invoice in one call) — every underlying piece is confirmed working, but it's compositing tools that don't fully exist yet (assets, and ideally activities). Build this after its parts ship, not before — sequencing, not a feasibility question. Still has the open truncation design question from the assets item above.
 - **`search_invoices`** (+ get-by-id via the `$filter=Id eq {id}` workaround, since the parens form is confirmed broken the same way `locations({id})` is) — real live data confirmed, but this is a bigger lift (a whole new entity/tool) than just surfacing invoice data on work orders (see "Now" above). Worth building once it's clear WO-embedded invoice data isn't enough on its own — invoice-first queries ("show me unpaid invoices") are a different shape of question than work-order-first ones. This would be the second real use of the parens-broken workaround — extract the shared helper mentioned in the Tech Debt entry when this ships.
 - **Location-level rollup** (e.g. open-work-order count per location) — genuinely unverified, not just lower-value: whether `$count`/`$expand` compose against a location's `workorders` navigation property has never been tested live. Needs its own verification spike before it can even be scoped, unlike everything above.
 
@@ -34,6 +32,11 @@ _(empty — both items shipped in v0.3.0, see Shipped below)_
 _(nothing currently queued for a specific next version)_
 
 ## Shipped
+
+### v0.4.0 (2026-09-18)
+- `get_work_order_assets` — new tool, `$expand=Assets` on the single-item work-order endpoint, capped at 50 via nested `$top` inside `$expand` (a real, working server-side cap on this endpoint, unlike the list endpoint — see `ARCHITECTURE.md` quirks). Response reports `{count, totalCount, truncated, assets}`, reusing `search_work_orders`' `totalCount`/`hasMore`-style shape against the work order's own `AssetCount` field.
+- `get_work_order_activities` — new tool, sub-resource path `/workorders({id})/workactivities` (same broken-`$expand`/working-sub-resource pattern as notes). Real `WorkActivity` shape confirmed live: check-in/check-out times, technician (from nested `User.FullName`), resolution code, work type, tech count.
+- Resolves the "no response-size/truncation safeguard" Tech Debt item (see Tech Debt > Resolved below) — solved by reusing the existing `totalCount`/`hasMore` pattern against a real cap, not a new mechanism.
 
 ### v0.3.0 (2026-09-16)
 - Surface invoice info on work orders — `invoice: {id, number, status, total, balance, invoiceDate, paidDate} | null` added to both `search_work_orders` and `get_work_order` via `$expand=Invoice`
@@ -62,6 +65,10 @@ _(nothing currently queued for a specific next version)_
 
 Not new capability — maintenance/quality items surfaced while building or researching this project. Same lifecycle as feature items (add, update, remove) but tracked separately since "should we fix this" is a different question from "should we build this."
 
+### Resolved (2026-09-18)
+
+- **~~No response-size/truncation safeguard.~~** Resolved by `get_work_order_assets` (v0.4.0). `$expand=Assets($top=50)` on the single-item work-order endpoint genuinely caps the returned array server-side (confirmed live: `$top=10` returned exactly 10 of a real `AssetCount` of 60) — and the work order already carries `AssetCount` as a plain field, so the response reuses `search_work_orders`' existing `totalCount`/`hasMore`-style shape (`{count, totalCount, truncated}`) rather than inventing a new mechanism. Note this only applies to the single-item endpoint — the list endpoint's `$expand=Assets` silently caps at 50 regardless of requested `$top`, a separate quirk documented in `ARCHITECTURE.md`.
+
 ### Resolved (2026-09-16)
 
 - **~~Generalize the parens-broken/`$filter=Id eq` workaround.~~** Re-scoped on inspection: it's currently used at exactly one real call site (`buildLocationFilter`) — `providers` has no working directory at all (see Rejected), so there's no second live implementation to deduplicate against yet. Building a shared helper for one call site would be an abstraction with a single implementation. Resolved by decision instead: left a code comment at that call site pointing future entities (invoices, once built) at the same one-line pattern. Actually extract a helper the second time it's needed, not before.
@@ -72,5 +79,4 @@ Not new capability — maintenance/quality items surfaced while building or rese
 
 ### Open
 
-- **No response-size/truncation safeguard.** Still not a problem today — no shipped tool currently produces unbounded output. Explicitly **not** built yet (deliberately deferred, not missed): the `get_work_order_assets`/`get_work_order_context` items in Proposed above are what will actually need this (a work order with 60 assets was found live). Build it when one of those ships, not speculatively ahead of them.
-- **`test.ts` as one growing file.** Less urgent than it was — the pure-function tests split out into their own `unit.test.ts` this session, so `test.ts` itself only grows with genuinely new *live* behavior now. Still fine at 11 checks; revisit a split-by-tool convention if it approaches ~15–20.
+- **`test.ts` as one growing file.** Less urgent than it was — the pure-function tests split out into their own `unit.test.ts` this session, so `test.ts` itself only grows with genuinely new *live* behavior now. Now at 13 checks; revisit a split-by-tool convention if it approaches ~15–20.

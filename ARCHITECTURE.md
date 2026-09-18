@@ -2,17 +2,19 @@
 
 A local, read-only MCP (Model Context Protocol) server that lets an LLM query ServiceChannel work orders and locations through natural-language tool calls, instead of the LLM constructing raw API requests itself.
 
-**Status:** working prototype, not a production integration. Built to answer one question for a larger platform business case: what does a real workflow against ServiceChannel's API actually cost in latency and tokens? It is deliberately small — three data types, five tools, no writes.
+**Status:** working prototype, not a production integration. Built to answer one question for a larger platform business case: what does a real workflow against ServiceChannel's API actually cost in latency and tokens? It is deliberately small — five data types, seven tools, no writes.
 
 ## What it does
 
-Five MCP tools, all read-only:
+Seven MCP tools, all read-only:
 
 | Tool | Input | Output |
 |---|---|---|
 | `search_work_orders` | `status`, `trade`, `category`, `locationId`, `dateFrom`, `dateTo`, `scheduledDateFrom`, `scheduledDateTo`, `completedDateFrom`, `completedDateTo`, `providerId`, `providerName`, `sortBy`, `sortOrder`, `offset`, `maxResults` (all optional) | `{ count, totalCount, hasMore, workOrders: [...] }` |
 | `get_work_order` | `workOrderId` (required) | one work order object |
 | `get_work_order_notes` | `workOrderId` (required) | `{ count, notes: [...] }` |
+| `get_work_order_assets` | `workOrderId` (required) | `{ count, totalCount, truncated, assets: [...] }` |
+| `get_work_order_activities` | `workOrderId` (required) | `{ count, activities: [...] }` |
 | `search_locations` | `locationId`, `name`, `storeId`, `city`, `state`, `maxResults` (all optional) | `{ count, locations: [...] }` |
 | `search_trades` | `name`, `maxResults` (all optional) | `{ count, trades: [...] }` |
 
@@ -105,6 +107,14 @@ Sorting goes through `buildOrderBy(sortBy, sortOrder)` in `sc-client.ts` — a s
 
 `get_work_order_notes` calls `GET /v3/odata/workorders({id})/notes` directly — a plain sub-resource GET, no `$expand`, no `$filter`. This is a different request shape than every other tool in this codebase (which all hit `/v3/odata/workorders` or `/v3/odata/locations` directly), because **`$expand=notes` doesn't work** — see the quirk below. Each note maps through `toCompactNote()` to `{id, number, text, createdBy, createdDate}`, dropping several less-useful fields (`DocumentId`, `GroupId`, `Visibility`, `IsAttachmentNote`, `ActionResolveDetails`, etc.) that exist on the raw `Note` entity per `$metadata`.
 
+## Work order assets
+
+`get_work_order_assets` calls `GET /v3/odata/workorders({id})?$select=Id,AssetCount&$expand=Assets($select=...;$top=ASSET_CAP)` — the same single-item endpoint as `get_work_order`, not a separate sub-resource path (unlike notes/activities). `Assets` is an OData navigation property (like `Provider`/`Invoice`), so it only appears with `$expand`. The nested `$top=50` inside `$expand` is a real, working cap on this endpoint (see quirk below) — it's what resolves the "no response-size/truncation safeguard" tech debt item. The work order's own `AssetCount` field (fetched via `$select`) gives the true total, so the response can report `{ count, totalCount, truncated, assets }`, the same `totalCount`/`hasMore`-style shape as `search_work_orders`' pagination, just applied to a single-resource cap instead of paging. `toCompactAsset()` maps each raw `Asset` to `{id, tag, manufacturer, modelNo, serialNo, trade, type, active, locationId}` — descriptive fields are frequently `null` in the sandbox (see quirk below), so the mapper is null-safe on every field but `id`/`active`.
+
+## Work order activities
+
+`get_work_order_activities` calls `GET /v3/odata/workorders({id})/workactivities` directly — a plain sub-resource GET, same shape as `get_work_order_notes` (`$expand=workactivities` is broken the same way `$expand=notes` is, see quirk below). Each activity maps through `toCompactActivity()` to `{id, timeIn, timeOut, technician, resolutionCode, workType, techsCount}`, sorted client-side by `timeIn` ascending (oldest first, matching notes' ordering) since the API doesn't confirm a server-side order on this endpoint. `technician` is read from the nested `User.FullName` field — `$select` pulls the whole `User` object in one request, same as it trims other fields.
+
 ## File layout
 
 ```
@@ -156,6 +166,9 @@ These were discovered by live trial against the SB2 sandbox and aren't obvious f
 - Several date fields (`CreatedDate`, `ScheduledDate`, etc.) come paired with a `*_DTO` variant carrying the same value at higher precision — safely ignorable.
 - **No `@odata.nextLink` is ever returned**, even when `$count=true` reports far more matches than `$top` returned (confirmed with a filter matching 4,363 rows against `$top=5`). `$skip` itself works correctly (confirmed: `$skip=5` returns a genuinely different, non-overlapping continuation of the same ordering) and `$count=true` does return a real `@odata.count` — but "are there more results" has to be computed client-side (`offset + returned-count < totalCount`), not read off a link the server provides. `search_work_orders`'s `hasMore` field is exactly that client-side computation.
 - **`$expand=notes` is broken** on both `/v3/odata/workorders` and `/v3/odata/workorders({id})` — it fails server-side with `"The member 'WorkOrder.NotesCollection' has no supported translation to SQL"` (or a bare `HTTP 500` on the list endpoint with a filter). The only way to actually fetch a work order's notes is the sub-resource path `GET /v3/odata/workorders({id})/notes` directly, with no `$expand` involved at all — confirmed live, returns the full note collection cleanly. This is why `get_work_order_notes` is a separate tool/request rather than a field folded into `get_work_order`.
+- **`$expand=Assets` behaves differently on the list endpoint vs. the single-item endpoint.** On the *list* endpoint (`/v3/odata/workorders?$filter=...`), the nested `Assets` collection is silently capped at 50 regardless of what `$top` is requested inside `$expand` (confirmed: a work order with `AssetCount: 60` still came back with only 50 assets even when `$expand=Assets($top=100)` was requested). On the *single-item* endpoint (`/workorders({id})`), there's no such cap — the same 60-asset work order returned all 60 with no `$top` requested — but requesting `$expand=Assets($top=N)` genuinely caps it server-side (confirmed: `$top=10` returned exactly 10 of 60). `get_work_order_assets` uses the single-item endpoint specifically so this real, working cap is available; nested `$select` also works inside `$expand=Assets(...)`, trimming each asset object the same way it does for `Provider`/`Invoice`. This is the same "list vs. single-item inconsistency" family as the `/locations({id})` bug, but here the single-item form is the more capable one, not the broken one.
+- **Asset descriptive fields are frequently null in this sandbox.** `Tag`, `Manufacturer`, `ModelNo`, `SerialNo`, `Trade`, and `Type` were `null` on every asset checked live, even ones tied to real work orders — only `Id`, `Active`, `LocationId`, and `TradeId` were reliably populated. Not a shape bug; the sandbox's asset records just aren't fully filled out. Don't assume a non-null value for these fields when testing.
+- **`$expand=workactivities` is broken** on `/v3/odata/workorders({id})`, the same failure pattern as `$expand=notes` (SQL-translation error). The working path is the sub-resource `GET /v3/odata/workorders({id})/workactivities`, confirmed live with a real check-in/check-out record: `{Id, WorkOrderId, TimeIn, TimeOut, IsTimeEdited, User: {Id, UserName, FullName, Email, LevelInfo}, CallerId, ResolutionCode, WorkType, HasCheckInInfo, HasCheckListResponse, TechsCount, Name, CreatedBy}`. `$select` works on this sub-resource, including pulling the nested `User` object whole.
 - **There is no standalone provider directory endpoint**, unlike locations. `GET /v3/odata/providers` returns `HTTP 500` ("Multiple actions were found that match the request" — an ambiguous controller-action collision, the same class of bug as the `/locations({id})` issue but on the bare collection this time, not just the single-item form). `GET /v3/odata/providers/detailedProviders` returns `404` despite both `providers` and `detailedProviders` being declared as top-level `EntitySet`s in `$metadata` — they're declared in the OData model but not actually backed by a working controller. Expanding providers through a location (`/v3/odata/locations?...&$expand=providers`) also 500s. **The only working way to see provider data on this API is the existing per-work-order `$expand=Provider`** (singular, on a work order) — there is no way to build a `search_providers` directory tool analogous to `search_locations` against this API as it currently stands. Don't re-attempt this without a documented change on ServiceChannel's side.
 
 ## Design decisions
@@ -188,7 +201,7 @@ Writes/mutations of any kind, multi-tenant support, a policy/approval engine, an
 
 Two independent scripts, deliberately kept separate rather than merged into one file:
 
-**`npm test`** — `tsc` then `node --env-file=.env dist/test.js`. Live integration checks (`test.ts`), eleven of them, all against the real SB2 API, no mocking, requiring real credentials and real sandbox data:
+**`npm test`** — `tsc` then `node --env-file=.env dist/test.js`. Live integration checks (`test.ts`), thirteen of them, all against the real SB2 API, no mocking, requiring real credentials and real sandbox data:
 
 1. Token fetch + a basic list call succeeds.
 2. `search_work_orders` respects `maxResults` and each result has an `id` + `status`.
@@ -201,6 +214,8 @@ Two independent scripts, deliberately kept separate rather than merged into one 
 9. `get_work_order_notes` against a known multi-note work order (`355703118`, 9 notes) returns more than one note, each with non-empty `text`/`createdBy`.
 10. `get_work_order` against a known invoiced work order (`357049342`) returns a non-null `invoice` with a well-formed `{id, status, ...}` shape.
 11. `search_trades` fuzzy-matches a known trade name and each result has an `id` + `name`.
+12. `get_work_order_assets` against a known 60-asset work order (`354456038`) returns `totalCount: 60`, a 50-item capped `assets` array, `truncated: true`, and every asset has an `id`.
+13. `get_work_order_activities` against a known work order (`355703118`) returns at least one activity with `resolutionCode: "INCOMPLETE"` and `technician: "Leum Fahey"` resolved from the nested `User.FullName`.
 
 Each check also logs its latency — this is the actual point of the prototype: real numbers for the business case, not just pass/fail. **Cannot run in CI** — needs real credentials.
 

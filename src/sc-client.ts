@@ -331,3 +331,72 @@ export function toCompactNote(raw: any): CompactNote {
     createdDate: raw.DateCreated,
   };
 }
+
+// Kept next to toCompactAsset on purpose: if a field is added to one, it
+// belongs in the other too. Nested $select works inside $expand=Assets(...)
+// the same way it does for Provider/Invoice (confirmed live).
+export const ASSET_SELECT = "Id,Tag,Manufacturer,ModelNo,SerialNo,Trade,Type,Active,LocationId";
+
+// $expand=Assets($top=N) genuinely caps the returned array server-side on the
+// single-item /workorders({id}) endpoint (confirmed live: $top=10 returned
+// exactly 10 of a real AssetCount of 60) -- unlike the list endpoint, which
+// silently caps nested Assets at 50 regardless of what $top is requested
+// inside $expand. Since get_work_order_assets uses the single-item endpoint,
+// this cap is a real, working safeguard, not a cosmetic one.
+export const ASSET_CAP = 50;
+
+export interface CompactAsset {
+  id: number;
+  tag: string | null;
+  manufacturer: string | null;
+  modelNo: string | null;
+  serialNo: string | null;
+  trade: string | null;
+  type: string | null;
+  active: boolean;
+  locationId: number | null;
+}
+
+// Sandbox asset data is sparse -- every asset seen live so far has null
+// descriptive fields (Tag/Manufacturer/ModelNo/SerialNo/Trade/Type) except
+// Id/Active/LocationId, so null-safety here is load-bearing, not decorative.
+export function toCompactAsset(raw: any): CompactAsset {
+  return {
+    id: raw.Id,
+    tag: raw.Tag ?? null,
+    manufacturer: raw.Manufacturer ?? null,
+    modelNo: raw.ModelNo ?? null,
+    serialNo: raw.SerialNo ?? null,
+    trade: raw.Trade ?? null,
+    type: raw.Type ?? null,
+    active: raw.Active ?? false,
+    locationId: raw.LocationId ?? null,
+  };
+}
+
+// Kept next to toCompactActivity on purpose: if a field is added to one, it
+// belongs in the other too. $select works on this sub-resource including
+// pulling the nested User object, same as notes' $select (confirmed live).
+export const ACTIVITY_SELECT = "Id,TimeIn,TimeOut,User,ResolutionCode,WorkType,TechsCount";
+
+export interface CompactActivity {
+  id: number;
+  timeIn: string | null;
+  timeOut: string | null;
+  technician: string | null;
+  resolutionCode: string | null;
+  workType: string | null;
+  techsCount: number | null;
+}
+
+export function toCompactActivity(raw: any): CompactActivity {
+  return {
+    id: raw.Id,
+    timeIn: raw.TimeIn ?? null,
+    timeOut: raw.TimeOut ?? null,
+    technician: raw.User?.FullName ?? null,
+    resolutionCode: raw.ResolutionCode ?? null,
+    workType: raw.WorkType ?? null,
+    techsCount: raw.TechsCount ?? null,
+  };
+}

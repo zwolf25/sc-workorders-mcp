@@ -9,11 +9,16 @@ import {
   toCompactLocation,
   toCompactNote,
   toCompactTrade,
+  toCompactAsset,
+  toCompactActivity,
   WORKORDER_SELECT,
   WORKORDER_EXPAND,
   LOCATION_SELECT,
   NOTE_SELECT,
   TRADE_SELECT,
+  ASSET_SELECT,
+  ASSET_CAP,
+  ACTIVITY_SELECT,
 } from "./src/sc-client.js";
 
 // Fixture convention: most values below (work order/provider/location names,
@@ -199,6 +204,46 @@ async function main() {
     "each trade needs id + name",
   );
   console.log(`PASS: search_trades name='maint' returned ${trades.length} results (${tradeLatency}ms)`);
+
+  const t11 = Date.now();
+  const assetsRaw = await apiFetch(`/v3/odata/workorders(354456038)`, {
+    $select: "Id,AssetCount",
+    $expand: `Assets($select=${ASSET_SELECT};$top=${ASSET_CAP})`,
+  });
+  const assetsLatency = Date.now() - t11;
+  const assets = (assetsRaw.Assets ?? []).map(toCompactAsset);
+  const assetsTotalCount = assetsRaw.AssetCount ?? assets.length;
+  assert.strictEqual(assetsTotalCount, 60, "known 60-asset work order should report totalCount=60");
+  assert.strictEqual(assets.length, 50, "assets list should be capped at ASSET_CAP");
+  assert.ok(assetsTotalCount > assets.length, "truncated should be true when totalCount exceeds the cap");
+  assert.ok(
+    assets.every((a: { id: number }) => typeof a.id === "number"),
+    "every asset needs an id",
+  );
+  console.log(
+    `PASS: get_work_order_assets(354456038) returned ${assets.length}/${assetsTotalCount} assets, truncated (${assetsLatency}ms)`,
+  );
+
+  const t12 = Date.now();
+  const activitiesData = await apiFetch(`/v3/odata/workorders(355703118)/workactivities`, {
+    $select: ACTIVITY_SELECT,
+  });
+  const activitiesLatency = Date.now() - t12;
+  const activities = (activitiesData.value ?? []).map(toCompactActivity);
+  assert.ok(activities.length >= 1, "known activity work order should return at least one activity");
+  assert.strictEqual(
+    activities[0].resolutionCode,
+    "INCOMPLETE",
+    "known activity should have resolutionCode INCOMPLETE",
+  );
+  assert.strictEqual(
+    activities[0].technician,
+    "Leum Fahey",
+    "known activity should resolve technician from User.FullName",
+  );
+  console.log(
+    `PASS: get_work_order_activities(355703118) returned ${activities.length} activities (${activitiesLatency}ms)`,
+  );
 
   console.log("\nAll checks passed.");
 }
