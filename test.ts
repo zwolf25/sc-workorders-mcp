@@ -19,6 +19,7 @@ import {
   ASSET_SELECT,
   ASSET_CAP,
   ACTIVITY_SELECT,
+  countWorkOrdersBy,
 } from "./src/sc-client.js";
 
 // Fixture convention: most values below (work order/provider/location names,
@@ -256,6 +257,24 @@ async function main() {
   assert.ok(counted["@odata.count"] > 0, "countOnly should report a positive HVAC totalCount");
   assert.strictEqual(counted["@odata.count"], sampled["@odata.count"], "countOnly total should match a normal page's");
   console.log(`PASS: search_work_orders countOnly totalCount=${counted["@odata.count"]}, no rows (${countLatency}ms)`);
+
+  // The API throttles at ~40 requests/min per application and the checks above already use most of that,
+  // so wait out the window before the multi-request grouping check.
+  await new Promise((resolve) => setTimeout(resolve, 61_000));
+
+  const t15 = Date.now();
+  const grouped = await countWorkOrdersBy("status", "Trade eq 'HVAC'");
+  const groupLatency = Date.now() - t15;
+  assert.ok(grouped.groups.length >= 1, "status grouping should discover at least one status value");
+  assert.ok(
+    grouped.groups.every((g) => g.count > 0),
+    "every discovered group should have a positive count",
+  );
+  assert.strictEqual(grouped.other, 0, "peel discovery should account for every HVAC work order");
+  assert.strictEqual(grouped.totalCount, counted["@odata.count"], "grouped total should match the countOnly total");
+  console.log(
+    `PASS: count_work_orders groupBy=status ${grouped.groups.map((g) => `${g.value}=${g.count}`).join(", ")} (${groupLatency}ms)`,
+  );
 
   console.log("\nAll checks passed.");
 }

@@ -8,6 +8,8 @@ import {
   buildLocationFilter,
   buildOrderBy,
   buildTradeFilter,
+  countWorkOrdersBy,
+  GROUP_BY,
   toCompactWorkOrder,
   toCompactLocation,
   toCompactNote,
@@ -24,7 +26,7 @@ import {
   ACTIVITY_SELECT,
 } from "./sc-client.js";
 
-const server = new McpServer({ name: "sc-workorders-mcp", version: "0.4.1" });
+const server = new McpServer({ name: "sc-workorders-mcp", version: "0.5.0" });
 
 const SearchInputSchema = z
   .object({
@@ -121,6 +123,34 @@ For "how many" questions set countOnly: true — returns just { totalCount } (ch
       hasMore: params.offset + workOrders.length < totalCount,
       workOrders,
     };
+    return { content: [{ type: "text", text: JSON.stringify(output, null, 2) }], structuredContent: output };
+  },
+);
+
+const CountInputSchema = SearchInputSchema.omit({
+  sortBy: true,
+  sortOrder: true,
+  offset: true,
+  maxResults: true,
+  countOnly: true,
+})
+  .extend({ groupBy: z.enum(GROUP_BY).describe("Field to group the counts by") })
+  .strict();
+
+server.registerTool(
+  "count_work_orders",
+  {
+    title: "Count Work Orders",
+    description: `Count ServiceChannel work orders grouped by status, trade, or category, with the same filters as search_work_orders. Read-only.
+
+Returns: { totalCount, groups: [{ value, count }] (largest first), other, truncated }. "other" is any matches not in groups (null values, or cut off by the request budget or throttling — truncated is then true).
+
+Costs roughly 2 API requests per distinct status/category value and 1 per trade, and the API throttles hard (~20 requests/min in practice), so grouping by trade over the whole dataset comes back truncated — narrow with filters, and don't call it repeatedly. If throttled, it returns the partial counts with truncated: true. For a single total with no breakdown use search_work_orders with countOnly.`,
+    inputSchema: CountInputSchema.shape,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async ({ groupBy, ...filters }) => {
+    const output = await countWorkOrdersBy(groupBy, buildFilter(filters));
     return { content: [{ type: "text", text: JSON.stringify(output, null, 2) }], structuredContent: output };
   },
 );

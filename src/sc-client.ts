@@ -73,7 +73,9 @@ export async function apiFetch(path: string, params: Record<string, string> = {}
   }
   if (res.status === 429) {
     const retryAfter = res.headers.get("Retry-After");
-    throw new Error(`Rate limited by ServiceChannel API${retryAfter ? ` — retry after ${retryAfter}s` : ""}.`);
+    throw new Error(
+      `Rate limited by ServiceChannel API${retryAfter ? ` — retry after ${/^\d+$/.test(retryAfter) ? `${retryAfter}s` : retryAfter}` : ""}.`,
+    );
   }
   if (res.status === 404) {
     throw new Error("Work order not found.");
@@ -399,4 +401,82 @@ export function toCompactActivity(raw: any): CompactActivity {
     workType: raw.WorkType ?? null,
     techsCount: raw.TechsCount ?? null,
   };
+}
+
+// $apply=groupby is unsupported by this API (HTTP 400), so per-group counts are one $count request per value.
+// The API also throttles per application (says 40/min, but ~20 succeeded from a fresh window in practice), so this
+// runs sequentially under a small request budget and returns partial counts instead of throwing if it is throttled.
+const GROUP_FIELDS = { status: "Status/Primary", trade: "Trade", category: "Category" } as const;
+export type GroupBy = keyof typeof GROUP_FIELDS;
+export const GROUP_BY = Object.keys(GROUP_FIELDS) as [GroupBy, ...GroupBy[]];
+const GROUP_REQUEST_BUDGET = 15;
+
+const joinAnd = (...clauses: (string | undefined)[]) => clauses.filter(Boolean).join(" and ") || undefined;
+
+export type GroupCounts = {
+  totalCount: number;
+  groups: { value: string; count: number }[];
+  other: number; // matches not covered by `groups` (null values, or values cut off by the request budget)
+  truncated: boolean;
+};
+
+export async function countWorkOrdersBy(groupBy: GroupBy, baseFilter: string | undefined): Promise<GroupCounts> {
+  const path = GROUP_FIELDS[groupBy];
+  let calls = 0;
+  const countWhere = async (filter: string | undefined): Promise<number> => {
+    calls++;
+    const data = await apiFetch("/v3/odata/workorders", {
+      ...(filter ? { $filter: filter } : {}),
+      $top: "0",
+      $count: "true",
+    });
+    return data["@odata.count"] ?? 0;
+  };
+  const totalCount = await countWhere(baseFilter);
+  const groups: GroupCounts["groups"] = [];
+  const countValue = async (v: string) =>
+    groups.push({ value: v, count: await countWhere(joinAnd(baseFilter, `${path} eq ${odataString(v)}`)) });
+  let truncated = false;
+
+  try {
+    if (groupBy === "trade") {
+      // Trades have a real directory endpoint; status/category don't, so those are discovered below.
+      calls++;
+      const trades = await apiFetch("/v3/odata/trades", { $select: TRADE_SELECT, $top: "50" });
+      for (const t of trades.value ?? []) {
+        if (calls >= GROUP_REQUEST_BUDGET) {
+          truncated = true;
+          break;
+        }
+        await countValue(t.Name);
+      }
+    } else {
+      // Peel: fetch one row not matching any value seen so far, count its value, repeat until none remain.
+      // `Status` is a nested object, hence the row.Status.Primary read; discovery beats a hardcoded list because
+      // Status/Primary isn't a closed enum.
+      const seen: string[] = [];
+      while (calls + 2 <= GROUP_REQUEST_BUDGET) {
+        calls++;
+        const filter = joinAnd(baseFilter, ...seen.map((v) => `${path} ne ${odataString(v)}`));
+        const data = await apiFetch("/v3/odata/workorders", {
+          ...(filter ? { $filter: filter } : {}),
+          $select: groupBy === "status" ? "Status" : "Category",
+          $top: "1",
+        });
+        const row = data.value?.[0];
+        const value = groupBy === "status" ? row?.Status?.Primary : row?.Category;
+        if (value == null) break; // no rows left, or a null value that can't be excluded by `ne`
+        seen.push(value);
+        await countValue(value);
+        truncated = calls + 2 > GROUP_REQUEST_BUDGET;
+      }
+    }
+  } catch (e) {
+    if (!(e instanceof Error) || !e.message.startsWith("Rate limited")) throw e;
+    truncated = true; // keep the counts gathered so far
+  }
+
+  groups.sort((a, b) => b.count - a.count);
+  const other = totalCount - groups.reduce((sum, g) => sum + g.count, 0);
+  return { totalCount, groups, other, truncated: truncated && other > 0 };
 }

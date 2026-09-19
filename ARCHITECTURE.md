@@ -2,11 +2,11 @@
 
 A local, read-only MCP (Model Context Protocol) server that lets an LLM query ServiceChannel work orders and locations through natural-language tool calls, instead of the LLM constructing raw API requests itself.
 
-**Status:** working prototype, not a production integration. Built to answer one question for a larger platform business case: what does a real workflow against ServiceChannel's API actually cost in latency and tokens? It is deliberately small — five data types, seven tools, no writes.
+**Status:** working prototype, not a production integration. Built to answer one question for a larger platform business case: what does a real workflow against ServiceChannel's API actually cost in latency and tokens? It is deliberately small — five data types, eight tools, no writes.
 
 ## What it does
 
-Seven MCP tools, all read-only:
+Eight MCP tools, all read-only:
 
 | Tool | Input | Output |
 |---|---|---|
@@ -17,6 +17,7 @@ Seven MCP tools, all read-only:
 | `get_work_order_activities` | `workOrderId` (required) | `{ count, activities: [...] }` |
 | `search_locations` | `locationId`, `name`, `storeId`, `city`, `state`, `maxResults` (all optional) | `{ count, locations: [...] }` |
 | `search_trades` | `name`, `maxResults` (all optional) | `{ count, trades: [...] }` |
+| `count_work_orders` | `groupBy` (required: `status`/`trade`/`category`) plus the same filters as `search_work_orders` | `{ totalCount, groups: [{value, count}], other, truncated }` |
 
 Both work-order tools (`search_work_orders`, `get_work_order`) include the assigned `provider` (`{id, name, contactName, phone, email}`, or `null` if unassigned) and `invoice` (`{id, number, status, total, balance, invoiceDate, paidDate}`, or `null` if none), plus `tradeId`/`priorityId`/`category`/`categoryId`, on every result — see the `$expand` note below. `search_work_orders` supports paging (`offset`, capped `maxResults`) and sorting (`sortBy`/`sortOrder`) — see [Pagination and sorting](#pagination-and-sorting).
 
@@ -105,6 +106,16 @@ Using `search_work_orders` as the example (`get_work_order` and `search_location
 
 Sorting goes through `buildOrderBy(sortBy, sortOrder)` in `sc-client.ts` — a small whitelist map (`createdDate → CreatedDate`, `scheduledDate → ScheduledDate`, `completedDate → CompletedDate`) that turns a Zod-enum-validated field name into an OData `$orderby` clause (e.g. `CreatedDate desc`). Same principle as `buildFilter`: the LLM picks from an enum, never supplies a raw OData property name. Sorting and filtering compose in the same request with no issues (confirmed live).
 
+## Grouped counts
+
+`count_work_orders` exists because `$apply=groupby` is unsupported here (HTTP 400), so per-group counts are built from one `$count` request (`$top=0&$count=true`) per value, in `countWorkOrdersBy()` in `sc-client.ts`. `groupBy` goes through a whitelist map (`status → Status/Primary`, `trade → Trade`, `category → Category`), same principle as `buildFilter`; the base `$filter` comes from the same `buildFilter`, so all search filters compose.
+
+Two ways of finding the values to count, because only trades have a directory:
+- **`trade`:** lists `/v3/odata/trades` (1 request), then one count per trade.
+- **`status` / `category`:** "peel" discovery. Fetch one row that matches none of the values seen so far (`$top=1`, `Field ne 'A' and Field ne 'B'`), count its value, repeat until no row is left. This costs 2 requests per distinct value and finds values nobody hardcoded (on the full sandbox, `Status/Primary` includes `INVOICED`, which was not among the three previously observed).
+
+The response reports `other = totalCount - sum(groups)` so nothing is silently dropped, and `truncated: true` when the request budget (`GROUP_REQUEST_BUDGET`, 15) or a 429 cut discovery short (a 429 mid-way returns the counts gathered so far instead of throwing). That budget means `groupBy: "trade"` over the whole dataset (22 trades) comes back truncated with 13 trades counted; narrow the filters to get all of them. A null value can't be excluded with `ne`, so it stops the peel and lands in `other`. The API's rate limit is tight (see quirk below), so requests run sequentially and the tool description warns the caller about cost.
+
 ## Work order notes
 
 `get_work_order_notes` calls `GET /v3/odata/workorders({id})/notes` directly — a plain sub-resource GET, no `$expand`, no `$filter`. This is a different request shape than every other tool in this codebase (which all hit `/v3/odata/workorders` or `/v3/odata/locations` directly), because **`$expand=notes` doesn't work** — see the quirk below. Each note maps through `toCompactNote()` to `{id, number, text, createdBy, createdDate}`, dropping several less-useful fields (`DocumentId`, `GroupId`, `Visibility`, `IsAttachmentNote`, `ActionResolveDetails`, etc.) that exist on the raw `Note` entity per `$metadata`.
@@ -129,7 +140,7 @@ sc-workorders-mcp/
 ├── .env.example           # committed, empty values — documents required config
 ├── .env                   # gitignored, real sandbox credentials (local only)
 ├── src/
-│   ├── index.ts            # McpServer setup, all 5 tool registrations, stdio entrypoint
+│   ├── index.ts            # McpServer setup, all 8 tool registrations, stdio entrypoint
 │   └── sc-client.ts        # auth, token cache, apiFetch, filter builders, response shapers, $select constants
 ├── test.ts                 # live integration smoke test, runs against the LIVE sandbox API (no mocks)
 └── unit.test.ts             # pure-function tests (buildFilter, buildOrderBy, toCompact*) — no credentials, no network, CI-safe
@@ -166,6 +177,7 @@ These were discovered by live trial against the SB2 sandbox and aren't obvious f
 - **`Provider` (the assigned vendor) is an OData navigation property, not a plain field** — checked via the `$metadata` document (`<NavigationProperty Name="Provider" Type="...Provider" />` on the `WorkOrder` entity type). A plain query for a work order simply omits it entirely; it only appears with `$expand=Provider` added to the request, on both the list endpoint and the `(id)` single-item endpoint (both confirmed live). Filtering on the expanded field also works: `Provider/Id eq {id}` for exact match, `contains(Provider/Name,'x')` for fuzzy — and like `Name`/`Address2` on locations, this `contains()` is case-insensitive too (confirmed: filtering `'acme'` matched a provider named `ACME REFRIGERATION CO`). The nested `Provider` object's contact-name field is called `MainContact`, not `ContactName` or similar — easy to guess wrong.
 - **`Invoice` is the same pattern as `Provider`, and composes with it.** Also a navigation property (singular, one invoice per work order — `null` when uninvoiced), requires `$expand=Invoice`, works on both list and single-item endpoints. Confirmed live with a real linked record (work order `357049342` → invoice `175688826`). `$expand=Provider,Invoice` in one request returns both correctly — this API doesn't choke on multiple navigation properties in the same `$expand`, unlike some of its other rough edges. **Bonus finding: nested `$expand(...)($select=...)` works too** — `$expand=Provider($select=Id,Name,...),Invoice($select=Id,Number,...)` trims each expanded object down to only the fields actually used, confirmed live and composing cleanly with a `$select` on the outer work-order fields at the same time. Worth checking for any future `$expand`, not just these two.
 - Several date fields (`CreatedDate`, `ScheduledDate`, etc.) come paired with a `*_DTO` variant carrying the same value at higher precision — safely ignorable.
+- **The rate limit is much tighter than it looks.** A 429 body reads `Request has been throttled. Your current Application limit is [40] per [1] minute`, and the `Retry-After` header is an HTTP *date* (e.g. `Sat, 19 Sep 2026 00:52:33 GMT`), not a seconds count. But measured live from a fresh window, only **20** sequential `$top=0&$count=true` calls succeeded (about 12s) before the 429. Treat ~20 requests/min per application as the working budget: 22 parallel requests all 429 immediately, and the live test suite has to wait out the window before its multi-request check. Blocked attempts appear to extend the window, so back off rather than retry.
 - **`$apply=groupby(...)` is not supported** — HTTP 400 (`'with' expected at position 42`). Server-side aggregation isn't available; per-group counts have to be one `$count` request per group.
 - **No `@odata.nextLink` is ever returned**, even when `$count=true` reports far more matches than `$top` returned (confirmed with a filter matching 4,363 rows against `$top=5`). `$skip` itself works correctly (confirmed: `$skip=5` returns a genuinely different, non-overlapping continuation of the same ordering) and `$count=true` does return a real `@odata.count` — but "are there more results" has to be computed client-side (`offset + returned-count < totalCount`), not read off a link the server provides. `search_work_orders`'s `hasMore` field is exactly that client-side computation.
 - **`$expand=notes` is broken** on both `/v3/odata/workorders` and `/v3/odata/workorders({id})` — it fails server-side with `"The member 'WorkOrder.NotesCollection' has no supported translation to SQL"` (or a bare `HTTP 500` on the list endpoint with a filter). The only way to actually fetch a work order's notes is the sub-resource path `GET /v3/odata/workorders({id})/notes` directly, with no `$expand` involved at all — confirmed live, returns the full note collection cleanly. This is why `get_work_order_notes` is a separate tool/request rather than a field folded into `get_work_order`.
@@ -204,7 +216,7 @@ Writes/mutations of any kind, multi-tenant support, a policy/approval engine, an
 
 Two independent scripts, deliberately kept separate rather than merged into one file:
 
-**`npm test`** — `tsc` then `node --env-file=.env dist/test.js`. Live integration checks (`test.ts`), fourteen of them, all against the real SB2 API, no mocking, requiring real credentials and real sandbox data:
+**`npm test`** — `tsc` then `node --env-file=.env dist/test.js`. Live integration checks (`test.ts`), fifteen of them, all against the real SB2 API, no mocking, requiring real credentials and real sandbox data:
 
 1. Token fetch + a basic list call succeeds.
 2. `search_work_orders` respects `maxResults` and each result has an `id` + `status`.
@@ -220,6 +232,7 @@ Two independent scripts, deliberately kept separate rather than merged into one 
 12. `get_work_order_assets` against a known 60-asset work order (`354456038`) returns `totalCount: 60`, a 50-item capped `assets` array, `truncated: true`, and every asset has an `id`.
 13. `get_work_order_activities` against a known work order (`355703118`) returns at least one activity with `resolutionCode: "INCOMPLETE"` and `technician: "Leum Fahey"` resolved from the nested `User.FullName`.
 14. `search_work_orders` `countOnly` (`$top=0`) with `Trade eq 'HVAC'` returns no rows and a positive `@odata.count` equal to what a normal `$top=1` page reports.
+15. `count_work_orders` `groupBy: "status"` with `Trade eq 'HVAC'` discovers at least one status, every group count is positive, `other` is 0, and `totalCount` matches check 14. It waits 61s first, because of the rate limit (below).
 
 Each check also logs its latency — this is the actual point of the prototype: real numbers for the business case, not just pass/fail. **Cannot run in CI** — needs real credentials.
 
