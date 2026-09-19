@@ -24,7 +24,7 @@ import {
   ACTIVITY_SELECT,
 } from "./sc-client.js";
 
-const server = new McpServer({ name: "sc-workorders-mcp", version: "0.4.0" });
+const server = new McpServer({ name: "sc-workorders-mcp", version: "0.4.1" });
 
 const SearchInputSchema = z
   .object({
@@ -71,6 +71,10 @@ const SearchInputSchema = z
     sortOrder: z.enum(["asc", "desc"]).default("desc").describe("Sort direction (only used if sortBy is set)"),
     offset: z.number().int().min(0).default(0).describe("Number of results to skip, for paging past the first page"),
     maxResults: z.number().int().min(1).max(50).default(20).describe("Max results to return (server caps at 50)"),
+    countOnly: z
+      .boolean()
+      .default(false)
+      .describe("Return only { totalCount } for the filters, no work orders. Use for 'how many...' questions."),
   })
   .strict();
 
@@ -82,12 +86,23 @@ server.registerTool(
 
 Returns: { count: number, totalCount: number, hasMore: boolean, workOrders: [{ id, status: {primary, extended}, trade, tradeId, locationId, priority, priorityId, category, categoryId, description, createdDate, scheduledDate, completedDate, provider: {id, name, contactName, phone, email} | null, invoice: {id, number, status, total, balance, invoiceDate, paidDate} | null }] }
 
-totalCount is the total number of matching work orders (not just this page); hasMore is true if offset+count < totalCount. Use offset to page through results beyond the first maxResults.`,
+totalCount is the total number of matching work orders (not just this page); hasMore is true if offset+count < totalCount. Use offset to page through results beyond the first maxResults.
+
+For "how many" questions set countOnly: true — returns just { totalCount } (cheaper, no work orders).`,
     inputSchema: SearchInputSchema.shape,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   async (params) => {
     const filter = buildFilter(params);
+    if (params.countOnly) {
+      const counted = await apiFetch("/v3/odata/workorders", {
+        ...(filter ? { $filter: filter } : {}),
+        $top: "0",
+        $count: "true",
+      });
+      const output = { totalCount: counted["@odata.count"] ?? 0 };
+      return { content: [{ type: "text", text: JSON.stringify(output, null, 2) }], structuredContent: output };
+    }
     const orderBy = buildOrderBy(params.sortBy, params.sortOrder);
     const data = await apiFetch("/v3/odata/workorders", {
       ...(filter ? { $filter: filter } : {}),

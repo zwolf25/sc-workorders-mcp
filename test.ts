@@ -245,6 +245,18 @@ async function main() {
     `PASS: get_work_order_activities(355703118) returned ${activities.length} activities (${activitiesLatency}ms)`,
   );
 
+  const t14 = Date.now();
+  const countFilter = { $filter: "Trade eq 'HVAC'", $count: "true" };
+  const [counted, sampled] = await Promise.all([
+    apiFetch("/v3/odata/workorders", { ...countFilter, $top: "0" }),
+    apiFetch("/v3/odata/workorders", { ...countFilter, $top: "1", $select: "Id" }),
+  ]);
+  const countLatency = Date.now() - t14;
+  assert.strictEqual((counted.value ?? []).length, 0, "countOnly ($top=0) should return no rows");
+  assert.ok(counted["@odata.count"] > 0, "countOnly should report a positive HVAC totalCount");
+  assert.strictEqual(counted["@odata.count"], sampled["@odata.count"], "countOnly total should match a normal page's");
+  console.log(`PASS: search_work_orders countOnly totalCount=${counted["@odata.count"]}, no rows (${countLatency}ms)`);
+
   console.log("\nAll checks passed.");
 }
 

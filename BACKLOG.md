@@ -12,7 +12,7 @@ Batch added 2026-09-16, live-verified against the real SB2 `$metadata` and API b
 
 Re-prioritized 2026-09-18 (same three axes as above; two items were probed live to firm up feasibility first).
 
-- **Count-only mode for `search_work_orders`** (added 2026-09-18, verified live 2026-09-18) — a `countOnly` flag that returns just `totalCount`. Surfaced when a "how many HVAC WOs?" question needed a full work order row back because `maxResults` has a minimum of 1. **Verified 2026-09-18:** `$top=0&$count=true&$filter=Trade eq 'HVAC'` returns HTTP 200, `@odata.count: 1368`, empty `value`. Build as `$top=0` on the same request path, skipping `toCompactWorkOrder`.
+_(empty — count-only mode shipped in v0.4.1, see Shipped below)_
 
 ### Next
 
@@ -44,6 +44,9 @@ Ordered. 1 and 2 are the gaps for anyone installing this from GitHub or measurin
 _(nothing currently queued for a specific next version)_
 
 ## Shipped
+
+### v0.4.1 (2026-09-18)
+- `countOnly` flag on `search_work_orders` — returns just `{ totalCount }` via `$top=0&$count=true` with the same filters, no `$select`/`$expand`. Live-verified before building (HTTP 200, `@odata.count: 1368` for `Trade eq 'HVAC'`, empty `value`); one new live check in `test.ts` (now 14). Also recorded that `$apply=groupby` is unsupported (HTTP 400) in `ARCHITECTURE.md`.
 
 ### v0.4.0 (2026-09-18)
 - `get_work_order_assets` — new tool, `$expand=Assets` on the single-item work-order endpoint, capped at 50 via nested `$top` inside `$expand` (a real, working server-side cap on this endpoint, unlike the list endpoint — see `ARCHITECTURE.md` quirks). Response reports `{count, totalCount, truncated, assets}`, reusing `search_work_orders`' `totalCount`/`hasMore`-style shape against the work order's own `AssetCount` field.
