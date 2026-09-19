@@ -2,6 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { timed } from "./metrics.js";
 import {
   apiFetch,
   buildFilter,
@@ -26,7 +27,12 @@ import {
   ACTIVITY_SELECT,
 } from "./sc-client.js";
 
-const server = new McpServer({ name: "sc-workorders-mcp", version: "0.5.1" });
+const server = new McpServer({ name: "sc-workorders-mcp", version: "0.6.0" });
+
+// Wrap every tool handler with the opt-in metrics logger (see metrics.ts) in one place, not per registration.
+const registerTool = server.registerTool.bind(server) as (name: string, config: any, handler: any) => unknown;
+server.registerTool = ((name: string, config: any, handler: any) =>
+  registerTool(name, config, timed(name, handler))) as typeof server.registerTool;
 
 const SearchInputSchema = z
   .object({

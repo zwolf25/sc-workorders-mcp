@@ -22,6 +22,7 @@ const {
   toCompactAsset,
   toCompactActivity,
 } = await import("./src/sc-client.js");
+const { toolMetric } = await import("./src/metrics.js");
 
 // buildFilter
 assert.strictEqual(buildFilter({}), undefined, "no fields -> no filter");
@@ -153,5 +154,13 @@ assert.strictEqual(activity.technician, "Jane Doe", "technician is read from the
 const activityNoUser = toCompactActivity({ Id: 2 });
 assert.strictEqual(activityNoUser.technician, null, "a missing User maps technician to null, not a throw");
 console.log("PASS: toCompactActivity");
+
+// toolMetric
+const metric = toolMetric("t", 12, 3, { content: [{ type: "text", text: "a".repeat(401) }] }, false);
+assert.strictEqual(metric.bytes, 401, "bytes counts the result text");
+assert.strictEqual(metric.estTokens, 101, "estTokens rounds bytes/4 up");
+assert.deepStrictEqual([metric.ms, metric.apiCalls, metric.error], [12, 3, false]);
+assert.strictEqual(toolMetric("t", 1, 0, undefined, true).bytes, 0, "a failed call (no result) records 0 bytes");
+console.log("PASS: toolMetric");
 
 console.log("\nAll unit checks passed.");

@@ -107,6 +107,10 @@ Using `search_work_orders` as the example (`get_work_order` and `search_location
 
 Sorting goes through `buildOrderBy(sortBy, sortOrder)` in `sc-client.ts` — a small whitelist map (`createdDate → CreatedDate`, `scheduledDate → ScheduledDate`, `completedDate → CompletedDate`) that turns a Zod-enum-validated field name into an OData `$orderby` clause (e.g. `CreatedDate desc`). Same principle as `buildFilter`: the LLM picks from an enum, never supplies a raw OData property name. Sorting and filtering compose in the same request with no issues (confirmed live).
 
+## Metrics
+
+`src/metrics.ts` exports `timed(tool, handler)`. In `src/index.ts`, `server.registerTool` is wrapped once, right after the server is created, so every tool handler gets it without touching the eight registrations. When `SC_METRICS_FILE` is unset, `timed` returns the handler unchanged (zero overhead). When set, each call appends one JSONL record: `{ts, tool, ms, apiCalls, bytes, estTokens, error}`. `apiCalls` is the delta of a counter `apiFetch` increments per real ServiceChannel request (the token fetch isn't counted; a 401 retry is), `bytes` is the UTF-8 size of the result's text content, `estTokens` is `ceil(bytes / 4)` (an estimate, not a tokenizer). A failed call records `error: true` and 0 bytes, and a metrics write failure is swallowed so it can never break a tool call. Observed live: `countOnly` returns ~6 estimated tokens against ~930 for a 5-row `search_work_orders` page.
+
 ## Grouped counts
 
 `count_work_orders` exists because `$apply=groupby` is unsupported here (HTTP 400), so per-group counts are built from one `$count` request (`$top=0&$count=true`) per value, in `countWorkOrdersBy()` in `sc-client.ts`. `groupBy` goes through a whitelist map (`status → Status/Primary`, `trade → Trade`, `category → Category`), same principle as `buildFilter`; the base `$filter` comes from the same `buildFilter`, so all search filters compose.
@@ -143,6 +147,7 @@ sc-workorders-mcp/
 ├── src/
 │   ├── index.ts            # McpServer setup, all 8 tool registrations, stdio entrypoint
 │   ├── check-auth.ts       # `npm run check-auth`: verifies credentials end to end, no MCP server
+│   ├── metrics.ts          # opt-in per-tool-call metrics logger (SC_METRICS_FILE)
 │   └── sc-client.ts        # auth, token cache, apiFetch, filter builders, response shapers, $select constants
 ├── test.ts                 # live integration smoke test, runs against the LIVE sandbox API (no mocks)
 └── unit.test.ts             # pure-function tests (buildFilter, buildOrderBy, toCompact*) — no credentials, no network, CI-safe
@@ -162,6 +167,7 @@ All config is environment variables, read once at module load in `sc-client.ts`;
 | `SC_PASSWORD` | yes | — | |
 | `SC_TOKEN_URL` | no | `https://sb2login.servicechannel.com/oauth/token` | Swap for prod/other sandbox |
 | `SC_API_BASE_URL` | no | `https://sb2api.servicechannel.com` | Swap for prod/other sandbox |
+| `SC_METRICS_FILE` | no | unset (off) | Append one JSON line per tool call — see [Metrics](#metrics) |
 | `SC_TEST_WORKORDER_ID` | no | first result from a live search | Used by `test.ts` only |
 
 ## ServiceChannel API quirks worth knowing
@@ -239,5 +245,7 @@ Two independent scripts, deliberately kept separate rather than merged into one 
 Each check also logs its latency — this is the actual point of the prototype: real numbers for the business case, not just pass/fail. **Cannot run in CI** — needs real credentials.
 
 **`npm run test:unit`** — `tsc` then `node dist/unit.test.js`. Pure-function checks (`unit.test.ts`) for `buildFilter`, `buildLocationFilter`, `buildOrderBy`, `buildTradeFilter`, and every `toCompact*` mapper: whitelist behavior, OData string-escaping, null/undefined-safety on missing fields. No network calls, no credentials — it sets placeholder `SC_*` env vars via a dynamic `import()` (a static import would run before the placeholders are set, since ES module imports are hoisted) purely to satisfy `sc-client.ts`'s fail-fast startup check, then never touches the network. **This is the one that runs in CI.**
+
+The unit script also covers `toolMetric` (byte and token-estimate arithmetic, and the no-result error case). The metrics wiring itself was verified end to end by driving the built server over stdio with `SC_METRICS_FILE` set and reading the file back.
 
 **CI** (`.github/workflows/build.yml`) runs, on every push/PR: `npm run build`, `npm run lint` (ESLint), `npm run format:check` (Prettier), and `npm run test:unit` — everything that doesn't need live credentials. The live suite stays a local-only, manually-run check.

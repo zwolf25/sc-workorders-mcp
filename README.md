@@ -56,6 +56,14 @@ claude mcp add sc-workorders -s user \
 
 `claude mcp add -e` stores those values in your local Claude config in plain text, and `.env` is only as private as your machine. Don't paste real values into issues, PRs, or screenshots, and rotate the client secret in ServiceChannel if one ever leaks.
 
+## Measuring latency and token cost
+
+This prototype exists to put real numbers on a ServiceChannel workflow. Set `SC_METRICS_FILE` (add `-e SC_METRICS_FILE=/path/metrics.jsonl` to `claude mcp add`, or put it in `.env` for `npm start`) and every tool call appends one JSON line: `{ts, tool, ms, apiCalls, bytes, estTokens, error}`. `apiCalls` is ServiceChannel requests made by that call, `bytes` is the result text handed to the LLM, and `estTokens` is `bytes / 4`, a rough estimate rather than a real tokenizer count. Off by default.
+
+```bash
+jq -s 'group_by(.tool) | map({tool: .[0].tool, calls: length, avgMs: (map(.ms) | add / length | floor), avgEstTokens: (map(.estTokens) | add / length | floor)})' "$SC_METRICS_FILE"
+```
+
 ## Testing
 
 `npm test` runs a live smoke test (`test.ts`) directly against a real ServiceChannel sandbox — no mocking. This means it **requires real credentials and live sandbox data to pass**, and is not runnable in CI. `npm run test:unit` covers the pure logic (filter builders, response mappers) with no credentials needed — this is the one CI runs, alongside `npm run lint` and `npm run format:check`. See ARCHITECTURE.md's Testing section for exactly what each one checks.

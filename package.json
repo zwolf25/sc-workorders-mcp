@@ -1,6 +1,6 @@
 {
   "name": "sc-workorders-mcp",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Read-only MCP server wrapping ServiceChannel's Sandbox2 OData API for work order queries",
   "license": "MIT",
   "private": true,

@@ -19,6 +19,8 @@ interface TokenCache {
 }
 
 let tokenCache: TokenCache | null = null;
+let apiCalls = 0;
+export const apiCallCount = () => apiCalls;
 
 async function fetchToken(): Promise<string> {
   const auth = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString("base64");
@@ -61,6 +63,7 @@ async function getToken(): Promise<string> {
 
 export async function apiFetch(path: string, params: Record<string, string> = {}, retrying = false): Promise<any> {
   const token = await getToken();
+  apiCalls++;
   const url = new URL(`${API_BASE_URL}${path}`);
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
 

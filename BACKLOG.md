@@ -16,9 +16,8 @@ _(empty — count-only mode shipped in v0.4.1, see Shipped below)_
 
 ### Next
 
-Ordered. 1 is the remaining gap for measuring this; the rest is capability.
+Ordered by value against the triage questions this tool exists to answer.
 
-- **Built-in call metrics** (added 2026-09-18) — log per-call latency and response bytes or estimated tokens to stderr, or a file behind an env flag. The prototype exists to produce these numbers for the business case, but today they only come from `test.ts` runs, not from real usage.
 - **`get_work_order_context`** (composite tool bundling a work order + notes + assets + invoice in one call) — every underlying piece now exists and is confirmed working (`get_work_order`, `get_work_order_notes`, `get_work_order_assets`, invoice-on-work-order). Promoted from Later now that its dependencies shipped in v0.4.0 — no more sequencing blocker, just the build itself. The truncation question is already resolved (`get_work_order_assets`'s `{count, totalCount, truncated}` shape), so this just needs to compose the existing calls.
 - **More `search_work_orders` filters** (added 2026-09-18, unverified) — `contains(Description,'x')` text search (`contains(Description,...)` is accepted, HTTP 200, but the one probe returned 0 matches, so match behavior is still unconfirmed; retry with a term known to appear); `priority`, `tradeId` and `categoryId` filters (the IDs are already returned but can't be filtered on, and `tradeId` would skip the exact-string trade lookup); `locationName`, resolved internally (today it takes `search_locations` then `search_work_orders`). Any new filter goes through the `buildFilter` whitelist.
 
@@ -42,6 +41,9 @@ Ordered. 1 is the remaining gap for measuring this; the rest is capability.
 _(nothing currently queued for a specific next version)_
 
 ## Shipped
+
+### v0.6.0 (2026-09-18)
+- Built-in call metrics — opt-in via `SC_METRICS_FILE`, one JSONL record per tool call: `{ts, tool, ms, apiCalls, bytes, estTokens, error}`. Wired in one place by wrapping `server.registerTool`; off by default and zero overhead when off. `estTokens` is `bytes / 4`, an estimate. Verified end to end over stdio; first real numbers: `countOnly` ~6 tokens vs ~930 for a 5-row search page.
 
 ### v0.5.1 (2026-09-18)
 - Credential onboarding and rotation, docs and diagnostics only (no new auth model). `npm run check-auth` verifies credentials end to end; README gains "Getting credentials" and "Changing credentials or users" (rotate = update `.env`, check-auth, `claude mcp remove`/`add`, restart; log out = `claude mcp remove`; switch users = two named MCP entries); auth failures now name the variables to fix. Probed the token endpoint live: wrong username/password is `HTTP 400 "invalid credentials"`, wrong client ID or secret is the `302` (indistinguishable). Also fixed the README's stale tool list.
