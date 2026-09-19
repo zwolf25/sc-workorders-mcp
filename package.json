@@ -1,6 +1,6 @@
 {
   "name": "sc-workorders-mcp",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Read-only MCP server wrapping ServiceChannel's Sandbox2 OData API for work order queries",
   "license": "MIT",
   "private": true,
@@ -15,6 +15,7 @@
   "scripts": {
     "build": "tsc",
     "start": "node --env-file=.env dist/src/index.js",
+    "check-auth": "npm run build && node --env-file=.env dist/src/check-auth.js",
     "test": "npm run build && node --env-file=.env dist/test.js",
     "test:unit": "npm run build && node dist/unit.test.js",
     "lint": "eslint .",

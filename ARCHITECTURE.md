@@ -71,6 +71,7 @@ grant_type=password&username=...&password=...
 - Access token: short-lived (600s / 10 min). Cached in memory (`tokenCache` module-level variable in `sc-client.ts`) and refreshed whenever the cache is empty or within 30s of expiry.
 - Refresh token: also returned, valid 30 days, but **unused** — the prototype just re-runs the password grant on expiry instead of implementing refresh-token rotation. Fine for a local dev tool; not fine for anything long-running or multi-user.
 - No token is ever persisted to disk. Every process restart re-authenticates from scratch.
+- **Failure modes (live-verified 2026-09-18):** a wrong username/password returns `HTTP 400` with the body `invalid credentials`; a wrong client secret and an unknown client ID are indistinguishable and both return the `302` below. `fetchToken()` turns these into messages naming the variables to fix (`SC_USERNAME`/`SC_PASSWORD` for 400, `SC_CLIENT_ID`/`SC_CLIENT_SECRET` for 302) and never echoes the response body or any credential value. `npm run check-auth` (`src/check-auth.ts`) runs one token fetch plus one cheap call and reports `OK: authenticated as <user> against <host>` or the same message, exit code 1.
 - **Critical gotcha:** a bad or unregistered OAuth client doesn't fail the token call with 401 — it silently redirects (`HTTP 302`) to an HTML login page (`/Account/LogOn`). A naive HTTP client following redirects would get back an HTML page and either crash on JSON parsing or (worse) look like a slow success. `fetchToken()` uses `redirect: "manual"` specifically so a 3xx response is caught and raised as a clear "auth failed" error instead.
 - Env-based credentials only (`SC_CLIENT_ID`, `SC_CLIENT_SECRET`, `SC_USERNAME`, `SC_PASSWORD`) — see [Configuration](#configuration).
 
@@ -141,6 +142,7 @@ sc-workorders-mcp/
 ├── .env                   # gitignored, real sandbox credentials (local only)
 ├── src/
 │   ├── index.ts            # McpServer setup, all 8 tool registrations, stdio entrypoint
+│   ├── check-auth.ts       # `npm run check-auth`: verifies credentials end to end, no MCP server
 │   └── sc-client.ts        # auth, token cache, apiFetch, filter builders, response shapers, $select constants
 ├── test.ts                 # live integration smoke test, runs against the LIVE sandbox API (no mocks)
 └── unit.test.ts             # pure-function tests (buildFilter, buildOrderBy, toCompact*) — no credentials, no network, CI-safe

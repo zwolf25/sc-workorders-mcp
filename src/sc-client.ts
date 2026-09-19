@@ -38,8 +38,12 @@ async function fetchToken(): Promise<string> {
 
   if (res.status >= 300 && res.status < 400) {
     throw new Error(
-      `Auth failed: token endpoint redirected (status ${res.status}). The OAuth client is likely not registered/active in this environment.`,
+      `Auth failed: token endpoint redirected (status ${res.status}). SC_CLIENT_ID or SC_CLIENT_SECRET was rejected — check both, and that the OAuth client was created in this environment itself (not synced from another one).`,
     );
+  }
+  if (res.status === 400) {
+    // Live-verified: a wrong username/password returns 400 "invalid credentials" (a wrong client ID or secret is the 302 above).
+    throw new Error("Auth failed: SC_USERNAME or SC_PASSWORD was rejected (token endpoint returned 400).");
   }
   if (!res.ok) {
     throw new Error(`Auth failed: token endpoint returned ${res.status}: ${await res.text()}`);

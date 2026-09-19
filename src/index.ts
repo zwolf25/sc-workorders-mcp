@@ -26,7 +26,7 @@ import {
   ACTIVITY_SELECT,
 } from "./sc-client.js";
 
-const server = new McpServer({ name: "sc-workorders-mcp", version: "0.5.0" });
+const server = new McpServer({ name: "sc-workorders-mcp", version: "0.5.1" });
 
 const SearchInputSchema = z
   .object({
