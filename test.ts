@@ -11,6 +11,7 @@ import {
   toCompactTrade,
   toCompactAsset,
   toCompactActivity,
+  getWorkOrderContext,
   WORKORDER_SELECT,
   WORKORDER_EXPAND,
   LOCATION_SELECT,
@@ -223,6 +224,15 @@ async function main() {
   );
   console.log(
     `PASS: get_work_order_assets(354456038) returned ${assets.length}/${assetsTotalCount} assets, truncated (${assetsLatency}ms)`,
+  );
+
+  const ctx = await getWorkOrderContext(354456038);
+  assert.strictEqual(ctx.id, 354456038, "context carries the work order fields");
+  assert.strictEqual(ctx.assets.totalCount, 60, "context reports the real asset total");
+  assert.strictEqual(ctx.assets.items.length, 50, "context caps assets at ASSET_CAP");
+  assert.ok(ctx.notesTruncated || ctx.notes !== null, "notes present unless throttled");
+  console.log(
+    `PASS: get_work_order_context(354456038) returned ${ctx.assets.count} assets, notesTruncated=${ctx.notesTruncated}`,
   );
 
   const t12 = Date.now();

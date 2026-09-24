@@ -2,7 +2,7 @@
 
 A local, read-only MCP (Model Context Protocol) server that lets an LLM query ServiceChannel work orders and locations through natural-language tool calls, instead of the LLM constructing raw API requests itself.
 
-**Status:** working prototype, not a production integration. Built to answer one question for a larger platform business case: what does a real workflow against ServiceChannel's API actually cost in latency and tokens? It is deliberately small — five data types, eight tools, no writes.
+**Status:** working prototype, not a production integration. Built to answer one question for a larger platform business case: what does a real workflow against ServiceChannel's API actually cost in latency and tokens? It is deliberately small — five data types, nine tools, no writes.
 
 ## What it does
 
@@ -14,6 +14,7 @@ Eight MCP tools, all read-only:
 | `get_work_order` | `workOrderId` (required) | one work order object |
 | `get_work_order_notes` | `workOrderId` (required) | `{ count, notes: [...] }` |
 | `get_work_order_assets` | `workOrderId` (required) | `{ count, totalCount, truncated, assets: [...] }` |
+| `get_work_order_context` | `workOrderId` (required) | work order fields + `{ assets: { count, totalCount, truncated, items }, notes: { count, items } \| null, notesTruncated }` |
 | `get_work_order_activities` | `workOrderId` (required) | `{ count, activities: [...] }` |
 | `search_locations` | `locationId`, `name`, `storeId`, `city`, `state`, `maxResults` (all optional) | `{ count, locations: [...] }` |
 | `search_trades` | `name`, `maxResults` (all optional) | `{ count, trades: [...] }` |
@@ -109,7 +110,7 @@ Sorting goes through `buildOrderBy(sortBy, sortOrder)` in `sc-client.ts` — a s
 
 ## Metrics
 
-`src/metrics.ts` exports `timed(tool, handler)`. In `src/index.ts`, `server.registerTool` is wrapped once, right after the server is created, so every tool handler gets it without touching the eight registrations. When `SC_METRICS_FILE` is unset, `timed` returns the handler unchanged (zero overhead). When set, each call appends one JSONL record: `{ts, tool, ms, apiCalls, bytes, estTokens, error}`. `apiCalls` is the delta of a counter `apiFetch` increments per real ServiceChannel request (the token fetch isn't counted; a 401 retry is), `bytes` is the UTF-8 size of the result's text content, `estTokens` is `ceil(bytes / 4)` (an estimate, not a tokenizer). A failed call records `error: true` and 0 bytes, and a metrics write failure is swallowed so it can never break a tool call. Observed live: `countOnly` returns ~6 estimated tokens against ~930 for a 5-row `search_work_orders` page.
+`src/metrics.ts` exports `timed(tool, handler)`. In `src/index.ts`, `server.registerTool` is wrapped once, right after the server is created, so every tool handler gets it without touching the nine registrations. When `SC_METRICS_FILE` is unset, `timed` returns the handler unchanged (zero overhead). When set, each call appends one JSONL record: `{ts, tool, ms, apiCalls, bytes, estTokens, error}`. `apiCalls` is the delta of a counter `apiFetch` increments per real ServiceChannel request (the token fetch isn't counted; a 401 retry is), `bytes` is the UTF-8 size of the result's text content, `estTokens` is `ceil(bytes / 4)` (an estimate, not a tokenizer). A failed call records `error: true` and 0 bytes, and a metrics write failure is swallowed so it can never break a tool call. Observed live: `countOnly` returns ~6 estimated tokens against ~930 for a 5-row `search_work_orders` page.
 
 ## Grouped counts
 
@@ -169,6 +170,10 @@ All config is environment variables, read once at module load in `sc-client.ts`;
 | `SC_API_BASE_URL` | no | `https://sb2api.servicechannel.com` | Swap for prod/other sandbox |
 | `SC_METRICS_FILE` | no | unset (off) | Append one JSON line per tool call — see [Metrics](#metrics) |
 | `SC_TEST_WORKORDER_ID` | no | first result from a live search | Used by `test.ts` only |
+
+## Work order context
+
+`get_work_order_context` bundles `get_work_order` and `get_work_order_assets` into one single-item request (`$select=WORKORDER_SELECT,AssetCount`, `$expand=WORKORDER_EXPAND,Assets($select=...;$top=ASSET_CAP)`; `Provider`, `Invoice` and `Assets` compose in one `$expand`, confirmed live), then fetches notes through their sub-resource: 2 requests instead of 3. Notes run second, so a 429 there returns everything else with `notes: null, notesTruncated: true` (same partial-result rule as `count_work_orders`); a 429 on the first request throws. `getWorkOrderContext()` and the pure `toWorkOrderContext()` live at the end of `sc-client.ts`; activities are not included.
 
 ## ServiceChannel API quirks worth knowing
 

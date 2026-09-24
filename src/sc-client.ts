@@ -487,3 +487,33 @@ export async function countWorkOrdersBy(groupBy: GroupBy, baseFilter: string | u
   const other = totalCount - groups.reduce((sum, g) => sum + g.count, 0);
   return { totalCount, groups, other, truncated: truncated && other > 0 };
 }
+
+// get_work_order_context: work order + invoice + provider + assets in ONE
+// single-item request (WORKORDER_EXPAND and Assets compose in $expand), plus
+// notes via their sub-resource (the only working path). 2 requests, not 3.
+// Notes run second, so a throttle there returns the rest with notes: null.
+export function toWorkOrderContext(raw: any, notes: any[] | null) {
+  const assets = (raw.Assets ?? []).map(toCompactAsset);
+  const totalCount = raw.AssetCount ?? assets.length;
+  const compactNotes = notes?.map(toCompactNote);
+  return {
+    ...toCompactWorkOrder(raw),
+    assets: { count: assets.length, totalCount, truncated: totalCount > assets.length, items: assets },
+    notes: compactNotes ? { count: compactNotes.length, items: compactNotes } : null,
+    notesTruncated: notes === null,
+  };
+}
+
+export async function getWorkOrderContext(workOrderId: number) {
+  const raw = await apiFetch(`/v3/odata/workorders(${workOrderId})`, {
+    $select: `${WORKORDER_SELECT},AssetCount`,
+    $expand: `${WORKORDER_EXPAND},Assets($select=${ASSET_SELECT};$top=${ASSET_CAP})`,
+  });
+  let notes: any[] | null = null;
+  try {
+    notes = (await apiFetch(`/v3/odata/workorders(${workOrderId})/notes`, { $select: NOTE_SELECT })).value ?? [];
+  } catch (e) {
+    if (!(e instanceof Error) || !e.message.startsWith("Rate limited")) throw e;
+  }
+  return toWorkOrderContext(raw, notes);
+}

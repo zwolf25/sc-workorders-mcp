@@ -21,6 +21,7 @@ const {
   toCompactTrade,
   toCompactAsset,
   toCompactActivity,
+  toWorkOrderContext,
 } = await import("./src/sc-client.js");
 const { toolMetric } = await import("./src/metrics.js");
 
@@ -154,6 +155,15 @@ assert.strictEqual(activity.technician, "Jane Doe", "technician is read from the
 const activityNoUser = toCompactActivity({ Id: 2 });
 assert.strictEqual(activityNoUser.technician, null, "a missing User maps technician to null, not a throw");
 console.log("PASS: toCompactActivity");
+
+// toWorkOrderContext
+const ctx = toWorkOrderContext({ Id: 1, AssetCount: 60, Assets: [{ Id: 9 }] }, [{ Id: 5, NoteData: "hi" }]);
+assert.deepStrictEqual([ctx.id, ctx.assets.count, ctx.assets.truncated], [1, 1, true], "assets carry the real total");
+assert.strictEqual(ctx.notes?.count, 1, "notes are mapped");
+assert.strictEqual(ctx.notesTruncated, false);
+const ctxThrottled = toWorkOrderContext({ Id: 1 }, null);
+assert.deepStrictEqual([ctxThrottled.notes, ctxThrottled.notesTruncated], [null, true], "null notes flag a throttle");
+console.log("PASS: toWorkOrderContext");
 
 // toolMetric
 const metric = toolMetric("t", 12, 3, { content: [{ type: "text", text: "a".repeat(401) }] }, false);

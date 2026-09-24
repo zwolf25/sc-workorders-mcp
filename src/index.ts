@@ -10,6 +10,7 @@ import {
   buildOrderBy,
   buildTradeFilter,
   countWorkOrdersBy,
+  getWorkOrderContext,
   GROUP_BY,
   toCompactWorkOrder,
   toCompactLocation,
@@ -27,7 +28,7 @@ import {
   ACTIVITY_SELECT,
 } from "./sc-client.js";
 
-const server = new McpServer({ name: "sc-workorders-mcp", version: "0.6.0" });
+const server = new McpServer({ name: "sc-workorders-mcp", version: "0.7.0" });
 
 // Wrap every tool handler with the opt-in metrics logger (see metrics.ts) in one place, not per registration.
 const registerTool = server.registerTool.bind(server) as (name: string, config: any, handler: any) => unknown;
@@ -227,6 +228,24 @@ totalCount is the work order's real asset count; truncated is true if there were
     const assets = (raw.Assets ?? []).map(toCompactAsset);
     const totalCount = raw.AssetCount ?? assets.length;
     const output = { count: assets.length, totalCount, truncated: totalCount > assets.length, assets };
+    return { content: [{ type: "text", text: JSON.stringify(output, null, 2) }], structuredContent: output };
+  },
+);
+
+server.registerTool(
+  "get_work_order_context",
+  {
+    title: "Get Work Order Context",
+    description: `Fetch a ServiceChannel work order together with its invoice, provider, assets, and notes in one call (2 API requests instead of 3 separate tool calls). Read-only.
+
+Returns: the get_work_order fields, plus assets: { count, totalCount, truncated, items } (same as get_work_order_assets), notes: { count, items } (same as get_work_order_notes, oldest first) | null, and notesTruncated.
+
+If the API throttles the notes request (~20 requests/min), notes is null and notesTruncated is true -- call get_work_order_notes later. Activities are not included; use get_work_order_activities.`,
+    inputSchema: GetInputSchema.shape,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async ({ workOrderId }) => {
+    const output = await getWorkOrderContext(workOrderId);
     return { content: [{ type: "text", text: JSON.stringify(output, null, 2) }], structuredContent: output };
   },
 );
