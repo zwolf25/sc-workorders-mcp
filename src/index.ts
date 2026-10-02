@@ -93,7 +93,7 @@ server.registerTool(
     title: "Search Work Orders",
     description: `Search ServiceChannel work orders by status, trade, category, location, provider, and/or date range (created/scheduled/completed). Supports sorting and paging. Read-only.
 
-Returns: { count: number, totalCount: number, hasMore: boolean, workOrders: [{ id, status: {primary, extended}, trade, tradeId, locationId, priority, priorityId, category, categoryId, description, createdDate, scheduledDate, completedDate, provider: {id, name, contactName, phone, email} | null, invoice: {id, number, status, total, balance, invoiceDate, paidDate} | null }] }
+Returns: { count: number, totalCount: number, hasMore: boolean, workOrders: [{ id, status: {primary, extended}, trade, tradeId, locationId, locationName, priority, priorityId, category, categoryId, description, createdDate, scheduledDate, completedDate, provider: {id, name, contactName, phone, email} | null, invoice: {id, number, status, total, balance, invoiceDate, paidDate} | null }] }
 
 totalCount is the total number of matching work orders (not just this page); hasMore is true if offset+count < totalCount. Use offset to page through results beyond the first maxResults.
 
@@ -174,7 +174,7 @@ server.registerTool(
     title: "Get Work Order",
     description: `Fetch a single ServiceChannel work order by ID. Read-only.
 
-Returns: { id, status: {primary, extended}, trade, tradeId, locationId, priority, priorityId, category, categoryId, description, createdDate, scheduledDate, completedDate, provider: {id, name, contactName, phone, email} | null, invoice: {id, number, status, total, balance, invoiceDate, paidDate} | null }
+Returns: { id, status: {primary, extended}, trade, tradeId, locationId, locationName, priority, priorityId, category, categoryId, description, createdDate, scheduledDate, completedDate, provider: {id, name, contactName, phone, email} | null, invoice: {id, number, status, total, balance, invoiceDate, paidDate} | null }
 
 For the work order's note history, use get_work_order_notes separately — notes aren't included here.`,
     inputSchema: GetInputSchema.shape,

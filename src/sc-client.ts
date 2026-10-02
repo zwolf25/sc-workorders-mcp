@@ -252,15 +252,19 @@ export interface CompactInvoice {
 
 // Kept next to toCompactWorkOrder on purpose: if a field is added to one,
 // it belongs in the other too, or it'll silently come back undefined.
-// Provider/Invoice must be in both this list and $expand for the nested
-// objects to come back at all (both are navigation properties, not plain
-// fields). WORKORDER_EXPAND uses nested $expand($select=...) to trim each
-// one down to only the fields the two Compact* mappers actually read --
-// confirmed live to compose cleanly with a bare $select on the outer entity.
+// Provider/Invoice/Location must be in both this list and $expand for the
+// nested objects to come back at all (all three are navigation properties,
+// not plain fields). WORKORDER_EXPAND uses nested $expand($select=...) to
+// trim each one down to only the fields the Compact* mappers actually read
+// -- confirmed live to compose cleanly with a bare $select on the outer
+// entity. Location($select=Name) specifically: locationId alone isn't
+// human-readable, and every caller of this server needs the name paired
+// with it, not just the id -- so it's fetched for free on every work-order
+// call instead of leaving it to a second search_locations round-trip.
 export const WORKORDER_SELECT =
-  "Id,Status,Trade,TradeId,LocationId,Priority,PriorityId,Category,CategoryId,Description,CreatedDate,ScheduledDate,CompletedDate,Provider,Invoice";
+  "Id,Status,Trade,TradeId,LocationId,Priority,PriorityId,Category,CategoryId,Description,CreatedDate,ScheduledDate,CompletedDate,Provider,Invoice,Location";
 export const WORKORDER_EXPAND =
-  "Provider($select=Id,Name,MainContact,Phone,Email),Invoice($select=Id,Number,Status,InvoiceTotal,InvoiceBalance,InvoiceDate,PaidDate)";
+  "Provider($select=Id,Name,MainContact,Phone,Email),Invoice($select=Id,Number,Status,InvoiceTotal,InvoiceBalance,InvoiceDate,PaidDate),Location($select=Name)";
 
 export interface CompactWorkOrder {
   [key: string]: unknown;
@@ -269,6 +273,7 @@ export interface CompactWorkOrder {
   trade: string;
   tradeId: number | null;
   locationId: number;
+  locationName: string;
   priority: string;
   priorityId: number | null;
   category: string;
@@ -288,6 +293,7 @@ export function toCompactWorkOrder(raw: any): CompactWorkOrder {
     trade: raw.Trade ?? "",
     tradeId: raw.TradeId ?? null,
     locationId: raw.LocationId,
+    locationName: raw.Location?.Name ?? "",
     priority: raw.Priority ?? "",
     priorityId: raw.PriorityId ?? null,
     category: raw.Category ?? "",

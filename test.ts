@@ -57,6 +57,10 @@ async function main() {
     ),
     "each result needs id + status",
   );
+  assert.ok(
+    workOrders.every((wo: { locationName: string }) => typeof wo.locationName === "string" && wo.locationName),
+    "each result needs a non-empty locationName alongside locationId",
+  );
   console.log(`PASS: search_work_orders returned ${workOrders.length} results (${searchLatency}ms)`);
 
   const testId = process.env.SC_TEST_WORKORDER_ID ? Number(process.env.SC_TEST_WORKORDER_ID) : workOrders[0]?.id;

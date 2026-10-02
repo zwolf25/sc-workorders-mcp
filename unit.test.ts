@@ -64,6 +64,7 @@ const compact = toCompactWorkOrder({
   Trade: "HVAC",
   TradeId: 5,
   LocationId: 99,
+  Location: { Name: "Main Street Store" },
   Priority: "High",
   PriorityId: 2,
   Category: "REPAIR",
@@ -84,6 +85,7 @@ const compact = toCompactWorkOrder({
   },
 });
 assert.strictEqual(compact.id, 1);
+assert.strictEqual(compact.locationName, "Main Street Store");
 assert.deepStrictEqual(compact.provider, { id: 7, name: "Acme", contactName: "Jane", phone: "555", email: "a@b.com" });
 assert.deepStrictEqual(compact.invoice, {
   id: 8,
@@ -99,6 +101,11 @@ const compactNoProvider = toCompactWorkOrder({ Id: 2, Status: {}, LocationId: 1,
 assert.strictEqual(compactNoProvider.provider, null, "a missing Provider maps to null, not undefined or a throw");
 assert.strictEqual(compactNoProvider.invoice, null, "a missing Invoice maps to null, not undefined or a throw");
 assert.strictEqual(compactNoProvider.trade, "", "missing string fields default to empty string, not undefined");
+assert.strictEqual(
+  compactNoProvider.locationName,
+  "",
+  "missing Location maps to empty string, not undefined or a throw",
+);
 console.log("PASS: toCompactWorkOrder");
 
 // toCompactLocation
