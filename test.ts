@@ -272,6 +272,44 @@ async function main() {
   assert.strictEqual(counted["@odata.count"], sampled["@odata.count"], "countOnly total should match a normal page's");
   console.log(`PASS: search_work_orders countOnly totalCount=${counted["@odata.count"]}, no rows (${countLatency}ms)`);
 
+  const t16 = Date.now();
+  const idFilter = buildFilter({ tradeId: 120880, categoryId: 14349 } as any);
+  const textFilter = buildFilter({ description: "asset", priority: "high" } as any);
+  const unionFilter = buildFilter({ locationName: "union" } as any);
+  const [byIds, byText, byLoc] = await Promise.all([
+    apiFetch("/v3/odata/workorders", { $filter: idFilter!, $select: "Id,TradeId,CategoryId", $top: "10" }),
+    apiFetch("/v3/odata/workorders", {
+      $filter: textFilter!,
+      $select: "Id,Description,Priority",
+      $top: "10",
+      $count: "true",
+    }),
+    apiFetch("/v3/odata/workorders", {
+      $filter: unionFilter!,
+      $select: "Id",
+      $expand: "Location($select=Name)",
+      $top: "10",
+    }),
+  ]);
+  assert.ok(byIds.value.length > 0, "tradeId+categoryId should find work orders");
+  assert.ok(
+    byIds.value.every((w: any) => w.TradeId === 120880 && w.CategoryId === 14349),
+    "every tradeId/categoryId result should match both IDs",
+  );
+  assert.ok(byText.value.length > 0, "description+priority should find work orders");
+  assert.ok(
+    byText.value.every((w: any) => /asset/i.test(w.Description) && w.Priority.toLowerCase() === "high"),
+    "every description/priority result should match both (case-insensitive)",
+  );
+  assert.ok(byLoc.value.length > 0, "locationName should find work orders");
+  assert.ok(
+    byLoc.value.every((w: any) => /union/i.test(w.Location?.Name)),
+    "every locationName result should be at a matching location (case-insensitive)",
+  );
+  console.log(
+    `PASS: search_work_orders tradeId+categoryId=${byIds.value.length}, description+priority=${byText["@odata.count"]} (${Date.now() - t16}ms)`,
+  );
+
   // The API throttles at ~40 requests/min per application and the checks above already use most of that,
   // so wait out the window before the multi-request grouping check.
   await new Promise((resolve) => setTimeout(resolve, 61_000));

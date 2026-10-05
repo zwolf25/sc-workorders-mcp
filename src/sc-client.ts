@@ -102,6 +102,11 @@ export interface SearchFilters {
   providerId?: number;
   providerName?: string;
   category?: string;
+  tradeId?: number;
+  priority?: string;
+  categoryId?: number;
+  description?: string;
+  locationName?: string;
   scheduledDateFrom?: string;
   scheduledDateTo?: string;
   completedDateFrom?: string;
@@ -124,6 +129,11 @@ export function buildFilter(f: SearchFilters): string | undefined {
   if (f.providerId) clauses.push(`Provider/Id eq ${f.providerId}`);
   if (f.providerName) clauses.push(`contains(Provider/Name,${odataString(f.providerName)})`);
   if (f.category) clauses.push(`Category eq ${odataString(f.category)}`);
+  if (f.tradeId) clauses.push(`TradeId eq ${f.tradeId}`);
+  if (f.priority) clauses.push(`Priority eq ${odataString(f.priority)}`);
+  if (f.categoryId) clauses.push(`CategoryId eq ${f.categoryId}`);
+  if (f.description) clauses.push(`contains(Description,${odataString(f.description)})`);
+  if (f.locationName) clauses.push(`contains(Location/Name,${odataString(f.locationName)})`);
   if (f.scheduledDateFrom) clauses.push(`ScheduledDate ge ${f.scheduledDateFrom}T00:00:00Z`);
   if (f.scheduledDateTo) clauses.push(`ScheduledDate le ${f.scheduledDateTo}T23:59:59Z`);
   if (f.completedDateFrom) clauses.push(`CompletedDate ge ${f.completedDateFrom}T00:00:00Z`);

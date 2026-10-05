@@ -1,6 +1,6 @@
 # sc-workorders-mcp — Demo Scenarios
 
-Prompts to run in a Claude session with this server connected, each chosen to show off specific capabilities. Kept in sync with the tool set by the `sc-workorders-feedback` skill: any change to a tool's inputs, outputs, or behavior updates the scenarios it touches, and every new tool or filter gets at least one scenario. IDs below are real records in the SB2 sandbox (the same ones `test.ts` asserts against); re-verify them if the sandbox is re-synced from production. All six scenarios were run live on 2026-09-24; counts drift with each sync, so treat numbers as illustrative.
+Prompts to run in a Claude session with this server connected, each chosen to show off specific capabilities. Kept in sync with the tool set by the `sc-workorders-feedback` skill: any change to a tool's inputs, outputs, or behavior updates the scenarios it touches, and every new tool or filter gets at least one scenario. IDs below are real records in the SB2 sandbox (the same ones `test.ts` asserts against); re-verify them if the sandbox is re-synced from production. Scenarios 1-6 were run live on 2026-09-24, scenario 7 on 2026-10-04; counts drift with each sync, so treat numbers as illustrative.
 
 The API throttles at ~20 requests/min, so leave a minute between scenarios and don't run them back to back.
 
@@ -8,7 +8,7 @@ The API throttles at ~20 requests/min, so leave a minute between scenarios and d
 
 | Tool | Scenarios |
 |---|---|
-| `search_work_orders` | 1, 2, 4 |
+| `search_work_orders` | 1, 2, 4, 7 |
 | `count_work_orders` | 3 |
 | `get_work_order` | 5 |
 | `get_work_order_notes` | 5 |
@@ -43,6 +43,10 @@ The API throttles at ~20 requests/min, so leave a minute between scenarios and d
 ### 6. Big asset list and truncation
 **Say:** "What equipment is tied to work order 354456038?"
 **Shows:** `get_work_order_assets` / `get_work_order_context` returning 50 of 60 with `truncated: true` and the real `totalCount`. Descriptive asset fields are mostly null in the sandbox; that is the data, not a bug.
+
+### 7. Filter by text, location name and priority
+**Say:** "Find high-priority work orders mentioning 'asset', and separately everything at any location with 'union' in its name."
+**Shows:** `description`, `priority` and `locationName` filters (case-insensitive substring, exact priority label), plus `tradeId`/`categoryId` when the user already has IDs. No `search_locations` lookup first. Sandbox as of 2026-10-04: 360 HIGH work orders mention 'asset'; 155 at Union Square.
 
 ## Maintaining this file
 

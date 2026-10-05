@@ -28,7 +28,7 @@ import {
   ACTIVITY_SELECT,
 } from "./sc-client.js";
 
-const server = new McpServer({ name: "sc-workorders-mcp", version: "0.7.0" });
+const server = new McpServer({ name: "sc-workorders-mcp", version: "0.9.0" });
 
 // Wrap every tool handler with the opt-in metrics logger (see metrics.ts) in one place, not per registration.
 const registerTool = server.registerTool.bind(server) as (name: string, config: any, handler: any) => unknown;
@@ -56,6 +56,19 @@ const SearchInputSchema = z
     providerId: z.number().int().positive().optional().describe("Exact ServiceChannel provider (vendor) ID"),
     providerName: z.string().optional().describe("Fuzzy match against the assigned provider's name"),
     category: z.string().optional().describe("Work order category, e.g. 'MAINTENANCE', 'REPAIR', 'CAP-EX'"),
+    tradeId: z
+      .number()
+      .int()
+      .positive()
+      .optional()
+      .describe("Exact trade ID (the tradeId on results, or from search_trades)"),
+    priority: z.string().optional().describe("Priority label, e.g. 'EMERGENCY', 'HIGH', 'Normal' (exact match)"),
+    categoryId: z.number().int().positive().optional().describe("Exact category ID (the categoryId on results)"),
+    description: z.string().optional().describe("Case-insensitive substring match against the work order description"),
+    locationName: z
+      .string()
+      .optional()
+      .describe("Case-insensitive substring match against the location name (no need to look up locationId first)"),
     scheduledDateFrom: z
       .string()
       .regex(/^\d{4}-\d{2}-\d{2}$/)
@@ -91,7 +104,7 @@ server.registerTool(
   "search_work_orders",
   {
     title: "Search Work Orders",
-    description: `Search ServiceChannel work orders by status, trade, category, location, provider, and/or date range (created/scheduled/completed). Supports sorting and paging. Read-only.
+    description: `Search ServiceChannel work orders by status, trade, category, priority, tradeId/categoryId, description text, location (id or name), provider, and/or date range (created/scheduled/completed). Supports sorting and paging. Read-only.
 
 Returns: { count: number, totalCount: number, hasMore: boolean, workOrders: [{ id, status: {primary, extended}, trade, tradeId, locationId, locationName, priority, priorityId, category, categoryId, description, createdDate, scheduledDate, completedDate, provider: {id, name, contactName, phone, email} | null, invoice: {id, number, status, total, balance, invoiceDate, paidDate} | null }] }
 

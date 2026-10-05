@@ -38,6 +38,11 @@ assert.strictEqual(
   "contains(Provider/Name,'O''Brien')",
   "a literal single quote in a value gets OData-escaped by doubling",
 );
+assert.strictEqual(
+  buildFilter({ tradeId: 7, priority: "HIGH", categoryId: 3, description: "it's", locationName: "Union" }),
+  "TradeId eq 7 and Priority eq 'HIGH' and CategoryId eq 3 and contains(Description,'it''s') and contains(Location/Name,'Union')",
+  "ID/priority/description/locationName filters map to whitelisted clauses",
+);
 console.log("PASS: buildFilter");
 
 // buildLocationFilter

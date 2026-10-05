@@ -10,7 +10,7 @@ Eight MCP tools, all read-only:
 
 | Tool | Input | Output |
 |---|---|---|
-| `search_work_orders` | `status`, `trade`, `category`, `locationId`, `dateFrom`, `dateTo`, `scheduledDateFrom`, `scheduledDateTo`, `completedDateFrom`, `completedDateTo`, `providerId`, `providerName`, `sortBy`, `sortOrder`, `offset`, `maxResults`, `countOnly` (all optional) | `{ count, totalCount, hasMore, workOrders: [...] }`, or just `{ totalCount }` when `countOnly: true` |
+| `search_work_orders` | `status`, `trade`, `category`, `tradeId`, `priority`, `categoryId`, `description`, `locationName`, `locationId`, `dateFrom`, `dateTo`, `scheduledDateFrom`, `scheduledDateTo`, `completedDateFrom`, `completedDateTo`, `providerId`, `providerName`, `sortBy`, `sortOrder`, `offset`, `maxResults`, `countOnly` (all optional) | `{ count, totalCount, hasMore, workOrders: [...] }`, or just `{ totalCount }` when `countOnly: true` |
 | `get_work_order` | `workOrderId` (required) | one work order object |
 | `get_work_order_notes` | `workOrderId` (required) | `{ count, notes: [...] }` |
 | `get_work_order_assets` | `workOrderId` (required) | `{ count, totalCount, truncated, assets: [...] }` |
@@ -81,10 +81,12 @@ grant_type=password&username=...&password=...
 Using `search_work_orders` as the example (`get_work_order` and `search_locations` follow the same shape):
 
 1. MCP client (Claude) calls the tool with arguments; the SDK validates them against the tool's Zod `inputSchema` before the handler ever runs.
-2. The handler calls `buildFilter()`, which walks a **fixed list of known-safe fields** (`status`, `trade`, `category`, `locationId`, `dateFrom`, `dateTo`, `scheduledDateFrom`, `scheduledDateTo`, `completedDateFrom`, `completedDateTo`, `providerId`, `providerName`) and, for each one present, appends one OData clause:
+2. The handler calls `buildFilter()`, which walks a **fixed list of known-safe fields** (`status`, `trade`, `category`, `tradeId`, `priority`, `categoryId`, `description`, `locationName`, `locationId`, `dateFrom`, `dateTo`, `scheduledDateFrom`, `scheduledDateTo`, `completedDateFrom`, `completedDateTo`, `providerId`, `providerName`) and, for each one present, appends one OData clause:
    - `Status/Primary eq 'OPEN'`
    - `Trade eq 'ALARMS'`
    - `Category eq 'MAINTENANCE'`
+   - `TradeId eq 7` / `CategoryId eq 3` / `Priority eq 'HIGH'`
+   - `contains(Description,'asset')` / `contains(Location/Name,'union')`
    - `LocationId eq 123`
    - `CreatedDate ge 2026-06-01T00:00:00Z` / `CreatedDate le 2026-06-30T23:59:59Z` (same `ge`/`le` pattern also used for `ScheduledDate`/`CompletedDate`)
    - `Provider/Id eq 2000123456`
@@ -186,7 +188,8 @@ These were discovered by live trial against the SB2 sandbox and aren't obvious f
 - **`$top` is silently capped at 50** by the server regardless of what's requested — confirmed empirically, not documented. `$top=0` works and returns just the count. The tools mirror this cap in their Zod schemas (`maxResults` max 50).
 - **The `/workorders({id})` single-item syntax works fine**, but the equivalent `/locations({id})` syntax does **not** — it returns HTTP 500 ("Multiple actions were found that match the request... GetLocationsObsolete... GetLocations... GetUserLocations...") due to an ambiguous route on ServiceChannel's side. The workaround, used here, is to fetch a single location via `$filter=Id eq {id}` on the list endpoint instead of the parens syntax.
 - **`contains()` is case-insensitive** on at least `Name` and `Address2` — confirmed by searching `'Maple'` and matching a record containing lowercase `'maple'`. This is what makes `search_locations`'s fuzzy name match usable without any client-side fuzzy-matching library.
-- **`Trade` and `Priority` are display strings**, each paired with a separate `*Id` integer field (`TradeId`, `PriorityId`) that this server doesn't currently expose.
+- **`Trade` and `Priority` are display strings**, each paired with a separate `*Id` integer field. `TradeId`/`CategoryId` are populated and filterable (`eq`). **`PriorityId` is `null` on every work order in this sandbox** (200 sampled across the dataset), so there is no `priorityId` filter; `priority` filters on the display string instead (`Priority eq 'HIGH'`, case-insensitive: `'high'` matched the same 361 rows). `Description ne null` (any `ne null` filter) returns HTTP 500 on this API.
+- **`contains(Description,'x')` and `contains(Location/Name,'x')` work and are case-insensitive**, the same as `Provider/Name`. An early probe returned 0 only because the term didn't appear in any description. `Location/Name` filters server-side through the navigation property, in one request, so `locationName` needs no `search_locations` round-trip.
 - **`Provider` (the assigned vendor) is an OData navigation property, not a plain field** — checked via the `$metadata` document (`<NavigationProperty Name="Provider" Type="...Provider" />` on the `WorkOrder` entity type). A plain query for a work order simply omits it entirely; it only appears with `$expand=Provider` added to the request, on both the list endpoint and the `(id)` single-item endpoint (both confirmed live). Filtering on the expanded field also works: `Provider/Id eq {id}` for exact match, `contains(Provider/Name,'x')` for fuzzy — and like `Name`/`Address2` on locations, this `contains()` is case-insensitive too (confirmed: filtering `'acme'` matched a provider named `ACME REFRIGERATION CO`). The nested `Provider` object's contact-name field is called `MainContact`, not `ContactName` or similar — easy to guess wrong.
 - **`Invoice` is the same pattern as `Provider`, and composes with it.** Also a navigation property (singular, one invoice per work order — `null` when uninvoiced), requires `$expand=Invoice`, works on both list and single-item endpoints. Confirmed live with a real linked record (work order `357049342` → invoice `175688826`). `$expand=Provider,Invoice` in one request returns both correctly — this API doesn't choke on multiple navigation properties in the same `$expand`, unlike some of its other rough edges. **Bonus finding: nested `$expand(...)($select=...)` works too** — `$expand=Provider($select=Id,Name,...),Invoice($select=Id,Number,...)` trims each expanded object down to only the fields actually used, confirmed live and composing cleanly with a `$select` on the outer work-order fields at the same time. Worth checking for any future `$expand`, not just these two.
 - **`Location` on a work order is the same navigation-property pattern as `Provider`/`Invoice`** — `$expand=Location($select=Name)` returns `{ Location: { Name: "..." } }` alongside the plain `LocationId` field (confirmed live, composes in the same `$expand` as `Provider`/`Invoice`). This is why every work-order-shaped tool (`search_work_orders`, `get_work_order`, `get_work_order_context`) returns `locationName` next to `locationId` unconditionally — a raw numeric id on its own isn't useful to a human reading the output, and fetching the name costs nothing extra since it rides along on the same request instead of a second `search_locations` round-trip.
@@ -230,7 +233,7 @@ Writes/mutations of any kind, multi-tenant support, a policy/approval engine, an
 
 Two independent scripts, deliberately kept separate rather than merged into one file:
 
-**`npm test`** — `tsc` then `node --env-file=.env dist/test.js`. Live integration checks (`test.ts`), fifteen of them, all against the real SB2 API, no mocking, requiring real credentials and real sandbox data:
+**`npm test`** — `tsc` then `node --env-file=.env dist/test.js`. Live integration checks (`test.ts`), sixteen of them, all against the real SB2 API, no mocking, requiring real credentials and real sandbox data:
 
 1. Token fetch + a basic list call succeeds.
 2. `search_work_orders` respects `maxResults` and each result has an `id` + `status`.
@@ -246,7 +249,8 @@ Two independent scripts, deliberately kept separate rather than merged into one 
 12. `get_work_order_assets` against a known 60-asset work order (`354456038`) returns `totalCount: 60`, a 50-item capped `assets` array, `truncated: true`, and every asset has an `id`.
 13. `get_work_order_activities` against a known work order (`355703118`) returns at least one activity with `resolutionCode: "INCOMPLETE"` and `technician: "Leum Fahey"` resolved from the nested `User.FullName`.
 14. `search_work_orders` `countOnly` (`$top=0`) with `Trade eq 'HVAC'` returns no rows and a positive `@odata.count` equal to what a normal `$top=1` page reports.
-15. `count_work_orders` `groupBy: "status"` with `Trade eq 'HVAC'` discovers at least one status, every group count is positive, `other` is 0, and `totalCount` matches check 14. It waits 61s first, because of the rate limit (below).
+15. `search_work_orders` ID/text filters: `tradeId`+`categoryId` return only rows matching both; `description`+`priority` and `locationName` each return only matching rows (case-insensitive), and none of the result sets is empty.
+16. `count_work_orders` `groupBy: "status"` with `Trade eq 'HVAC'` discovers at least one status, every group count is positive, `other` is 0, and `totalCount` matches check 14. It waits 61s first, because of the rate limit (below).
 
 Each check also logs its latency — this is the actual point of the prototype: real numbers for the business case, not just pass/fail. **Cannot run in CI** — needs real credentials.
 
