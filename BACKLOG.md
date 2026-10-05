@@ -16,11 +16,9 @@ _(empty — count-only mode shipped in v0.4.1, see Shipped below)_
 
 ### Next
 
-**Re-prioritized 2026-10-04** on the same three axes, after v0.9.0 shipped the filters. Ordered by effort against unknowns: the environment guard is a one-liner with no design questions, `outputSchema` is small with no unknowns and makes the spike's generated TypeScript useful, and the code-mode spike is the biggest unknown and gates two Later items.
+**Re-prioritized 2026-10-04**, updated 2026-10-05 after v0.9.1 shipped the environment guard and `outputSchema`. The code-mode spike is now the top item: the biggest unknown, it gates two Later items, and the output schemas it needed are in place.
 
-- **Environment guard** (added 2026-09-18, **top of the list as of 2026-10-04**: one startup log line, no design questions, ships in minutes) — `SC_API_BASE_URL` swaps between sandbox and prod silently. A startup log line naming the environment (host only, never credentials) would prevent "which env am I querying?" confusion.
-- **`outputSchema` on all 9 tools** (added 2026-09-20, **2nd as of 2026-10-04**) — none declares one today (`structuredContent` is emitted but untyped). Code-mode gateways generate typed TS from tool schemas; without output schemas the script author sees `unknown` and guesses field names. Zod schemas co-located with each `toCompact*` mapper (same rule as the `$select` constants); add a unit assertion that each mapper's output parses against its schema. Small effort, no unknowns, useful to non-code-mode clients too (validation).
-- **Code-mode gateway spike (Executor)** (added 2026-09-20, **3rd as of 2026-10-04**: biggest unknown, gates two Later items; run it after `outputSchema` so the gateway sees typed output) — "code mode" MCP (Cloudflare Code Mode, Anthropic's code-execution-with-MCP, gateways like executor.sh) gives the model one `execute` tool and exposes MCP tools as a generated TypeScript API; scripts run in a sandbox, so intermediate results (search → notes per WO → filter/group) never pass through the LLM's context. Executor wraps existing MCP servers, so this server needs no changes to be tried. Spike: register `sc-workorders` behind Executor (local, stdio), run one composed script (search open HVAC WOs → notes for each → summarize) against the same question via direct tool calls, and compare with `SC_METRICS_FILE` (tokens, ms, apiCalls). Record whether the ~20 req/min limit bites and whether Executor surfaces `structuredContent`. Tool-definition bloat is not the win here (9 small tools); composition is. Decision input for the two code-mode items in Later. Also the natural place to run the pending `SC_METRICS_FILE` comparison of `get_work_order_context` (2 requests) against 3 separate calls.
+- **Code-mode gateway spike (Executor)** (added 2026-09-20, **top as of 2026-10-05**; `outputSchema` shipped in v0.9.1, so the gateway sees typed output) — "code mode" MCP (Cloudflare Code Mode, Anthropic's code-execution-with-MCP, gateways like executor.sh) gives the model one `execute` tool and exposes MCP tools as a generated TypeScript API; scripts run in a sandbox, so intermediate results (search → notes per WO → filter/group) never pass through the LLM's context. Executor wraps existing MCP servers, so this server needs no changes to be tried. Spike: register `sc-workorders` behind Executor (local, stdio), run one composed script (search open HVAC WOs → notes for each → summarize) against the same question via direct tool calls, and compare with `SC_METRICS_FILE` (tokens, ms, apiCalls). Record whether the ~20 req/min limit bites and whether Executor surfaces `structuredContent`. Tool-definition bloat is not the win here (9 small tools); composition is. Decision input for the two code-mode items in Later. Also the natural place to run the pending `SC_METRICS_FILE` comparison of `get_work_order_context` (2 requests) against 3 separate calls.
 
 ### Later — valuable, but bigger scope or sequenced behind "Now"/"Next"
 
@@ -43,6 +41,11 @@ _(empty — count-only mode shipped in v0.4.1, see Shipped below)_
 _(nothing currently queued for a specific next version)_
 
 ## Shipped
+
+### v0.9.1 (2026-10-05)
+- `outputSchema` on all 9 tools. Item schemas are Zod, co-located with each `toCompact*` mapper (the `Compact*` types are now `z.infer` of them); list wrappers live next to the registrations. The SDK validates every result against them. `search_work_orders` has optional `count`/`hasMore`/`workOrders` because `countOnly` returns just `{ totalCount }`. Unit check parses sparse mapper output against every schema; all 9 tools verified live over stdio.
+- Environment guard: startup log line `sc-workorders-mcp running via stdio (API: <host>)`, host only.
+- Fixed the `package-lock.json` version drift (it said 0.7.0); package.json, lockfile and server now all say 0.9.1.
 
 ### v0.9.0 (2026-10-04)
 - More `search_work_orders` filters (also accepted by `count_work_orders`): `tradeId`, `categoryId`, `priority` (display string, exact, case-insensitive), `description` (`contains`, case-insensitive) and `locationName` (`contains(Location/Name,...)`, one request, no `search_locations` hop). Whitelisted in `buildFilter`; one new live check (`test.ts` 15) and a unit assertion. Findings: `PriorityId` is null on every sandbox work order, so the filter is on the `Priority` string instead of an ID; the earlier `Description` probe returned 0 only because the term wasn't present, `contains` works. (v0.8.0, `locationName` on results, is in git history only.)
@@ -98,6 +101,10 @@ _(nothing currently queued for a specific next version)_
 
 Not new capability — maintenance/quality items surfaced while building or researching this project. Same lifecycle as feature items (add, update, remove) but tracked separately since "should we fix this" is a different question from "should we build this."
 
+### Resolved (2026-10-05)
+
+- **~~`package-lock.json` version drift.~~** Lockfile said 0.7.0 while `package.json` and the server said 0.9.0. Fixed in v0.9.1 with `npm install --package-lock-only`. Bump `package.json`, the lockfile (re-run that command) and the version string in `src/index.ts` together.
+
 ### Resolved (2026-09-18)
 
 - **~~No response-size/truncation safeguard.~~** Resolved by `get_work_order_assets` (v0.4.0). `$expand=Assets($top=50)` on the single-item work-order endpoint genuinely caps the returned array server-side (confirmed live: `$top=10` returned exactly 10 of a real `AssetCount` of 60) — and the work order already carries `AssetCount` as a plain field, so the response reuses `search_work_orders`' existing `totalCount`/`hasMore`-style shape (`{count, totalCount, truncated}`) rather than inventing a new mechanism. Note this only applies to the single-item endpoint — the list endpoint's `$expand=Assets` silently caps at 50 regardless of requested `$top`, a separate quirk documented in `ARCHITECTURE.md`.
@@ -111,7 +118,5 @@ Not new capability — maintenance/quality items surfaced while building or rese
 - **~~No CI coverage of the live-dependent logic.~~** Partially resolved: the *pure* logic (filter/orderby builders, response mappers) now has real coverage in CI via the new `unit.test.ts` + `npm run test:unit`, using placeholder env vars so no real credentials are needed. What's still true and unresolved: the *live* API-calling logic (`apiFetch`, `fetchToken`, and real filtering/sorting/pagination behavior against real data) still can't run in CI without exposing real credentials, and still doesn't.
 
 ### Open
-
-- **`package-lock.json` version drift.** The lockfile still says 0.7.0 while `package.json` and the server say 0.9.0 (found 2026-10-04). Fix with `npm install --package-lock-only` on the next version bump, and bump all three together from now on.
 - **Group-by counts over the full dataset are budget-limited.** With ~20 requests/min, `count_work_orders` by trade covers 13 of 22 trades unfiltered. Possible fixes if it matters: cache the per-value counts briefly in memory, or add a `groups` input to pick which values to count. Deliberately not built: caching is state, and narrowing filters already works.
 - **`test.ts` as one growing file.** Less urgent than it was — the pure-function tests split out into their own `unit.test.ts` this session, so `test.ts` itself only grows with genuinely new *live* behavior now. Now at 16 checks; revisit a split-by-tool convention if it approaches ~15–20.

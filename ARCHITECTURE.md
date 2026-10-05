@@ -6,7 +6,7 @@ A local, read-only MCP (Model Context Protocol) server that lets an LLM query Se
 
 ## What it does
 
-Eight MCP tools, all read-only:
+Nine MCP tools, all read-only, each with an `outputSchema`:
 
 | Tool | Input | Output |
 |---|---|---|
@@ -101,6 +101,12 @@ Using `search_work_orders` as the example (`get_work_order` and `search_location
    - any other non-2xx → generic error including status and response body.
 5. Each raw work order in `data.value` is passed through `toCompactWorkOrder()`.
 6. The handler returns both a JSON text block (`content`) and a `structuredContent` object — the MCP SDK's modern pattern, giving clients that support structured output a typed object instead of having to re-parse the text block.
+
+## Output schemas and startup log
+
+Every tool declares an `outputSchema` (Zod, in `src/index.ts` for the list wrappers, in `sc-client.ts` for the item shapes). The item schemas (`CompactWorkOrderSchema`, `CompactNoteSchema`, ...) sit next to their `toCompact*` mappers, and the `Compact*` types are `z.infer` of them, so a mapper and its schema can't drift apart without a compile error or a failing unit check. The MCP SDK validates each `structuredContent` against the schema on every call, so a mismatch surfaces as a tool error instead of a silently wrong shape. `search_work_orders` is one tool with two shapes: `count`, `hasMore` and `workOrders` are optional because `countOnly` returns only `{ totalCount }`. Schemas are the source for the TypeScript a code-mode gateway generates (see `BACKLOG.md`). Nullable fields in the schemas must match the mappers' null-safety (the sandbox's asset records are sparse); `unit.test.ts` parses sparse mapper output against every schema.
+
+On startup the server logs `sc-workorders-mcp running via stdio (API: <host>)` to stderr, host only (`API_HOST` in `sc-client.ts`), so it is obvious whether a session points at the sandbox or production. No credentials or full URL are logged.
 
 ## Pagination and sorting
 
@@ -256,6 +262,6 @@ Each check also logs its latency — this is the actual point of the prototype: 
 
 **`npm run test:unit`** — `tsc` then `node dist/unit.test.js`. Pure-function checks (`unit.test.ts`) for `buildFilter`, `buildLocationFilter`, `buildOrderBy`, `buildTradeFilter`, and every `toCompact*` mapper: whitelist behavior, OData string-escaping, null/undefined-safety on missing fields. No network calls, no credentials — it sets placeholder `SC_*` env vars via a dynamic `import()` (a static import would run before the placeholders are set, since ES module imports are hoisted) purely to satisfy `sc-client.ts`'s fail-fast startup check, then never touches the network. **This is the one that runs in CI.**
 
-The unit script also covers `toolMetric` (byte and token-estimate arithmetic, and the no-result error case). The metrics wiring itself was verified end to end by driving the built server over stdio with `SC_METRICS_FILE` set and reading the file back.
+The unit script also parses every mapper's output (sparse inputs included) against its output schema, and covers `toolMetric` (byte and token-estimate arithmetic, and the no-result error case). The metrics wiring itself was verified end to end by driving the built server over stdio with `SC_METRICS_FILE` set and reading the file back.
 
 **CI** (`.github/workflows/build.yml`) runs, on every push/PR: `npm run build`, `npm run lint` (ESLint), `npm run format:check` (Prettier), and `npm run test:unit` — everything that doesn't need live credentials. The live suite stays a local-only, manually-run check.

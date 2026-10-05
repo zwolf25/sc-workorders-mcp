@@ -12,6 +12,15 @@ import {
   countWorkOrdersBy,
   getWorkOrderContext,
   GROUP_BY,
+  API_HOST,
+  CompactWorkOrderSchema,
+  CompactLocationSchema,
+  CompactNoteSchema,
+  CompactTradeSchema,
+  CompactAssetSchema,
+  CompactActivitySchema,
+  GroupCountsSchema,
+  WorkOrderContextSchema,
   toCompactWorkOrder,
   toCompactLocation,
   toCompactNote,
@@ -28,7 +37,7 @@ import {
   ACTIVITY_SELECT,
 } from "./sc-client.js";
 
-const server = new McpServer({ name: "sc-workorders-mcp", version: "0.9.0" });
+const server = new McpServer({ name: "sc-workorders-mcp", version: "0.9.1" });
 
 // Wrap every tool handler with the opt-in metrics logger (see metrics.ts) in one place, not per registration.
 const registerTool = server.registerTool.bind(server) as (name: string, config: any, handler: any) => unknown;
@@ -100,6 +109,26 @@ const SearchInputSchema = z
   })
   .strict();
 
+// Output schemas, one per tool. The SDK validates every structuredContent against these, so a mapper that drifts from
+// its schema fails loudly instead of handing clients a shape they weren't promised. Item schemas live in sc-client.ts
+// next to their mappers.
+const SearchOutputSchema = z.object({
+  totalCount: z.number().describe("Total matching work orders, not just this page"),
+  count: z.number().optional().describe("Work orders in this page (absent when countOnly)"),
+  hasMore: z.boolean().optional().describe("True if offset + count < totalCount (absent when countOnly)"),
+  workOrders: z.array(CompactWorkOrderSchema).optional().describe("Absent when countOnly"),
+});
+const NotesOutputSchema = z.object({ count: z.number(), notes: z.array(CompactNoteSchema) });
+const AssetsOutputSchema = z.object({
+  count: z.number(),
+  totalCount: z.number(),
+  truncated: z.boolean(),
+  assets: z.array(CompactAssetSchema),
+});
+const ActivitiesOutputSchema = z.object({ count: z.number(), activities: z.array(CompactActivitySchema) });
+const LocationsOutputSchema = z.object({ count: z.number(), locations: z.array(CompactLocationSchema) });
+const TradesOutputSchema = z.object({ count: z.number(), trades: z.array(CompactTradeSchema) });
+
 server.registerTool(
   "search_work_orders",
   {
@@ -112,6 +141,7 @@ totalCount is the total number of matching work orders (not just this page); has
 
 For "how many" questions set countOnly: true — returns just { totalCount } (cheaper, no work orders).`,
     inputSchema: SearchInputSchema.shape,
+    outputSchema: SearchOutputSchema.shape,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   async (params) => {
@@ -167,6 +197,7 @@ Returns: { totalCount, groups: [{ value, count }] (largest first), other, trunca
 
 Costs roughly 2 API requests per distinct status/category value and 1 per trade, and the API throttles hard (~20 requests/min in practice), so grouping by trade over the whole dataset comes back truncated — narrow with filters, and don't call it repeatedly. If throttled, it returns the partial counts with truncated: true. For a single total with no breakdown use search_work_orders with countOnly.`,
     inputSchema: CountInputSchema.shape,
+    outputSchema: GroupCountsSchema.shape,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   async ({ groupBy, ...filters }) => {
@@ -191,6 +222,7 @@ Returns: { id, status: {primary, extended}, trade, tradeId, locationId, location
 
 For the work order's note history, use get_work_order_notes separately — notes aren't included here.`,
     inputSchema: GetInputSchema.shape,
+    outputSchema: CompactWorkOrderSchema.shape,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   async ({ workOrderId }) => {
@@ -211,6 +243,7 @@ server.registerTool(
 
 Returns: { count: number, notes: [{ id, number, text, createdBy, createdDate }] }, oldest first.`,
     inputSchema: GetInputSchema.shape,
+    outputSchema: NotesOutputSchema.shape,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   async ({ workOrderId }) => {
@@ -231,6 +264,7 @@ Returns: { count: number, totalCount: number, truncated: boolean, assets: [{ id,
 
 totalCount is the work order's real asset count; truncated is true if there were more assets than the ${ASSET_CAP}-item cap returned. Descriptive fields (tag/manufacturer/modelNo/serialNo/trade/type) are frequently null -- asset records aren't always fully filled out.`,
     inputSchema: GetInputSchema.shape,
+    outputSchema: AssetsOutputSchema.shape,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   async ({ workOrderId }) => {
@@ -255,6 +289,7 @@ Returns: the get_work_order fields, plus assets: { count, totalCount, truncated,
 
 If the API throttles the notes request (~20 requests/min), notes is null and notesTruncated is true -- call get_work_order_notes later. Activities are not included; use get_work_order_activities.`,
     inputSchema: GetInputSchema.shape,
+    outputSchema: WorkOrderContextSchema.shape,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   async ({ workOrderId }) => {
@@ -271,6 +306,7 @@ server.registerTool(
 
 Returns: { count: number, activities: [{ id, timeIn, timeOut, technician, resolutionCode, workType, techsCount }] }, oldest first.`,
     inputSchema: GetInputSchema.shape,
+    outputSchema: ActivitiesOutputSchema.shape,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   async ({ workOrderId }) => {
@@ -309,6 +345,7 @@ Use this to resolve a location name (e.g. "Main Street Store") to the locationId
 
 Returns: { count: number, locations: [{ id, name, storeId, address, city, state, zip, phone, contact, status }] }`,
     inputSchema: SearchLocationsInputSchema.shape,
+    outputSchema: LocationsOutputSchema.shape,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   async (params) => {
@@ -341,6 +378,7 @@ Use this to discover the exact trade string search_work_orders' \`trade\`/\`cate
 
 Returns: { count: number, trades: [{ id, name }] }`,
     inputSchema: SearchTradesInputSchema.shape,
+    outputSchema: TradesOutputSchema.shape,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   async (params) => {
@@ -359,7 +397,7 @@ Returns: { count: number, trades: [{ id, name }] }`,
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("sc-workorders-mcp running via stdio");
+  console.error(`sc-workorders-mcp running via stdio (API: ${API_HOST})`);
 }
 
 main().catch((error) => {

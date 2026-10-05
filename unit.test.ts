@@ -22,6 +22,13 @@ const {
   toCompactAsset,
   toCompactActivity,
   toWorkOrderContext,
+  CompactWorkOrderSchema,
+  CompactLocationSchema,
+  CompactNoteSchema,
+  CompactTradeSchema,
+  CompactAssetSchema,
+  CompactActivitySchema,
+  WorkOrderContextSchema,
 } = await import("./src/sc-client.js");
 const { toolMetric } = await import("./src/metrics.js");
 
@@ -176,6 +183,42 @@ assert.strictEqual(ctx.notesTruncated, false);
 const ctxThrottled = toWorkOrderContext({ Id: 1 }, null);
 assert.deepStrictEqual([ctxThrottled.notes, ctxThrottled.notesTruncated], [null, true], "null notes flag a throttle");
 console.log("PASS: toWorkOrderContext");
+
+// Output schemas: every mapper's output must parse against its schema (the SDK enforces this on every tool call).
+// Sparse inputs too: null-safety in the mappers has to match the nullable fields in the schemas.
+const rawWo = {
+  Id: 1,
+  Status: { Primary: "OPEN", Extended: "IN PROGRESS" },
+  LocationId: 9,
+  Location: { Name: "Union Square" },
+  CreatedDate: "2026-01-01T00:00:00Z",
+  Provider: { Id: 2, Name: "ACME" },
+  Invoice: { Id: 3, Number: "I-1", Status: "OPEN", InvoiceTotal: 10, InvoiceDate: "2026-01-02" },
+};
+const mapped: [string, { safeParse: (v: unknown) => { success: boolean } }, unknown][] = [
+  ["work order", CompactWorkOrderSchema, toCompactWorkOrder(rawWo)],
+  [
+    "work order, no provider/invoice",
+    CompactWorkOrderSchema,
+    toCompactWorkOrder({ ...rawWo, Provider: null, Invoice: null }),
+  ],
+  ["location", CompactLocationSchema, toCompactLocation({ Id: 1, Address1: "123" })],
+  ["note", CompactNoteSchema, toCompactNote({ Id: 1, Number: 1, DateCreated: "2026-01-01" })],
+  ["trade", CompactTradeSchema, toCompactTrade({ Id: 1, Name: "HVAC" })],
+  ["asset", CompactAssetSchema, toCompactAsset({ Id: 2 })],
+  ["activity", CompactActivitySchema, toCompactActivity({ Id: 2 })],
+  [
+    "context",
+    WorkOrderContextSchema,
+    toWorkOrderContext({ ...rawWo, AssetCount: 1, Assets: [{ Id: 9 }] }, [
+      { Id: 5, Number: 1, DateCreated: "2026-01-01" },
+    ]),
+  ],
+  ["context, throttled notes", WorkOrderContextSchema, toWorkOrderContext(rawWo, null)],
+];
+for (const [name, schema, value] of mapped)
+  assert.ok(schema.safeParse(value).success, `${name} output matches its schema`);
+console.log("PASS: output schemas");
 
 // toolMetric
 const metric = toolMetric("t", 12, 3, { content: [{ type: "text", text: "a".repeat(401) }] }, false);

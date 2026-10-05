@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 const REQUIRED_ENV = ["SC_CLIENT_ID", "SC_CLIENT_SECRET", "SC_USERNAME", "SC_PASSWORD"] as const;
 for (const key of REQUIRED_ENV) {
   if (!process.env[key]) {
@@ -12,6 +14,8 @@ const USERNAME = process.env.SC_USERNAME!;
 const PASSWORD = process.env.SC_PASSWORD!;
 const TOKEN_URL = process.env.SC_TOKEN_URL ?? "https://sb2login.servicechannel.com/oauth/token";
 const API_BASE_URL = process.env.SC_API_BASE_URL ?? "https://sb2api.servicechannel.com";
+// Host only, for the startup log line: names the environment (sandbox vs prod) without echoing credentials.
+export const API_HOST = new URL(API_BASE_URL).host;
 
 interface TokenCache {
   token: string;
@@ -184,19 +188,19 @@ export function buildLocationFilter(f: LocationFilters): string | undefined {
 // it belongs in the other too, or it'll silently come back undefined.
 export const LOCATION_SELECT = "Id,Name,StoreId,Address1,Address2,City,State,Zip,Phone,Contact,Status";
 
-export interface CompactLocation {
-  [key: string]: unknown;
-  id: number;
-  name: string;
-  storeId: string;
-  address: string;
-  city: string;
-  state: string;
-  zip: string;
-  phone: string | null;
-  contact: string | null;
-  status: string;
-}
+export const CompactLocationSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  storeId: z.string(),
+  address: z.string(),
+  city: z.string(),
+  state: z.string(),
+  zip: z.string(),
+  phone: z.string().nullable(),
+  contact: z.string().nullable(),
+  status: z.string(),
+});
+export type CompactLocation = z.infer<typeof CompactLocationSchema>;
 
 export function toCompactLocation(raw: any): CompactLocation {
   const address = [raw.Address1, raw.Address2].filter(Boolean).join(", ");
@@ -230,10 +234,11 @@ export function buildTradeFilter(f: TradeFilters): string | undefined {
 // belongs in the other too.
 export const TRADE_SELECT = "Id,Name";
 
-export interface CompactTrade {
-  id: number;
-  name: string;
-}
+export const CompactTradeSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+});
+export type CompactTrade = z.infer<typeof CompactTradeSchema>;
 
 export function toCompactTrade(raw: any): CompactTrade {
   return {
@@ -242,23 +247,25 @@ export function toCompactTrade(raw: any): CompactTrade {
   };
 }
 
-export interface CompactProvider {
-  id: number;
-  name: string;
-  contactName: string | null;
-  phone: string | null;
-  email: string | null;
-}
+export const CompactProviderSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  contactName: z.string().nullable(),
+  phone: z.string().nullable(),
+  email: z.string().nullable(),
+});
+export type CompactProvider = z.infer<typeof CompactProviderSchema>;
 
-export interface CompactInvoice {
-  id: number;
-  number: string;
-  status: string;
-  total: number;
-  balance: number | null;
-  invoiceDate: string;
-  paidDate: string | null;
-}
+export const CompactInvoiceSchema = z.object({
+  id: z.number(),
+  number: z.string(),
+  status: z.string(),
+  total: z.number(),
+  balance: z.number().nullable(),
+  invoiceDate: z.string().nullable(),
+  paidDate: z.string().nullable(),
+});
+export type CompactInvoice = z.infer<typeof CompactInvoiceSchema>;
 
 // Kept next to toCompactWorkOrder on purpose: if a field is added to one,
 // it belongs in the other too, or it'll silently come back undefined.
@@ -276,25 +283,25 @@ export const WORKORDER_SELECT =
 export const WORKORDER_EXPAND =
   "Provider($select=Id,Name,MainContact,Phone,Email),Invoice($select=Id,Number,Status,InvoiceTotal,InvoiceBalance,InvoiceDate,PaidDate),Location($select=Name)";
 
-export interface CompactWorkOrder {
-  [key: string]: unknown;
-  id: number;
-  status: { primary: string; extended: string };
-  trade: string;
-  tradeId: number | null;
-  locationId: number;
-  locationName: string;
-  priority: string;
-  priorityId: number | null;
-  category: string;
-  categoryId: number | null;
-  description: string;
-  createdDate: string;
-  scheduledDate: string | null;
-  completedDate: string | null;
-  provider: CompactProvider | null;
-  invoice: CompactInvoice | null;
-}
+export const CompactWorkOrderSchema = z.object({
+  id: z.number(),
+  status: z.object({ primary: z.string(), extended: z.string() }),
+  trade: z.string(),
+  tradeId: z.number().nullable(),
+  locationId: z.number(),
+  locationName: z.string(),
+  priority: z.string(),
+  priorityId: z.number().nullable(),
+  category: z.string(),
+  categoryId: z.number().nullable(),
+  description: z.string(),
+  createdDate: z.string(),
+  scheduledDate: z.string().nullable(),
+  completedDate: z.string().nullable(),
+  provider: CompactProviderSchema.nullable(),
+  invoice: CompactInvoiceSchema.nullable(),
+});
+export type CompactWorkOrder = z.infer<typeof CompactWorkOrderSchema>;
 
 export function toCompactWorkOrder(raw: any): CompactWorkOrder {
   return {
@@ -339,13 +346,14 @@ export function toCompactWorkOrder(raw: any): CompactWorkOrder {
 // it belongs in the other too, or it'll silently come back undefined.
 export const NOTE_SELECT = "Id,Number,NoteData,CreatedBy,DateCreated";
 
-export interface CompactNote {
-  id: number;
-  number: number;
-  text: string;
-  createdBy: string;
-  createdDate: string;
-}
+export const CompactNoteSchema = z.object({
+  id: z.number(),
+  number: z.number(),
+  text: z.string(),
+  createdBy: z.string(),
+  createdDate: z.string(),
+});
+export type CompactNote = z.infer<typeof CompactNoteSchema>;
 
 export function toCompactNote(raw: any): CompactNote {
   return {
@@ -370,17 +378,18 @@ export const ASSET_SELECT = "Id,Tag,Manufacturer,ModelNo,SerialNo,Trade,Type,Act
 // this cap is a real, working safeguard, not a cosmetic one.
 export const ASSET_CAP = 50;
 
-export interface CompactAsset {
-  id: number;
-  tag: string | null;
-  manufacturer: string | null;
-  modelNo: string | null;
-  serialNo: string | null;
-  trade: string | null;
-  type: string | null;
-  active: boolean;
-  locationId: number | null;
-}
+export const CompactAssetSchema = z.object({
+  id: z.number(),
+  tag: z.string().nullable(),
+  manufacturer: z.string().nullable(),
+  modelNo: z.string().nullable(),
+  serialNo: z.string().nullable(),
+  trade: z.string().nullable(),
+  type: z.string().nullable(),
+  active: z.boolean(),
+  locationId: z.number().nullable(),
+});
+export type CompactAsset = z.infer<typeof CompactAssetSchema>;
 
 // Sandbox asset data is sparse -- every asset seen live so far has null
 // descriptive fields (Tag/Manufacturer/ModelNo/SerialNo/Trade/Type) except
@@ -404,15 +413,16 @@ export function toCompactAsset(raw: any): CompactAsset {
 // pulling the nested User object, same as notes' $select (confirmed live).
 export const ACTIVITY_SELECT = "Id,TimeIn,TimeOut,User,ResolutionCode,WorkType,TechsCount";
 
-export interface CompactActivity {
-  id: number;
-  timeIn: string | null;
-  timeOut: string | null;
-  technician: string | null;
-  resolutionCode: string | null;
-  workType: string | null;
-  techsCount: number | null;
-}
+export const CompactActivitySchema = z.object({
+  id: z.number(),
+  timeIn: z.string().nullable(),
+  timeOut: z.string().nullable(),
+  technician: z.string().nullable(),
+  resolutionCode: z.string().nullable(),
+  workType: z.string().nullable(),
+  techsCount: z.number().nullable(),
+});
+export type CompactActivity = z.infer<typeof CompactActivitySchema>;
 
 export function toCompactActivity(raw: any): CompactActivity {
   return {
@@ -436,12 +446,13 @@ const GROUP_REQUEST_BUDGET = 15;
 
 const joinAnd = (...clauses: (string | undefined)[]) => clauses.filter(Boolean).join(" and ") || undefined;
 
-export type GroupCounts = {
-  totalCount: number;
-  groups: { value: string; count: number }[];
-  other: number; // matches not covered by `groups` (null values, or values cut off by the request budget)
-  truncated: boolean;
-};
+export const GroupCountsSchema = z.object({
+  totalCount: z.number(),
+  groups: z.array(z.object({ value: z.string(), count: z.number() })),
+  other: z.number().describe("Matches not covered by groups (null values, or values cut off by the request budget)"),
+  truncated: z.boolean(),
+});
+export type GroupCounts = z.infer<typeof GroupCountsSchema>;
 
 export async function countWorkOrdersBy(groupBy: GroupBy, baseFilter: string | undefined): Promise<GroupCounts> {
   const path = GROUP_FIELDS[groupBy];
@@ -508,6 +519,17 @@ export async function countWorkOrdersBy(groupBy: GroupBy, baseFilter: string | u
 // single-item request (WORKORDER_EXPAND and Assets compose in $expand), plus
 // notes via their sub-resource (the only working path). 2 requests, not 3.
 // Notes run second, so a throttle there returns the rest with notes: null.
+export const WorkOrderContextSchema = CompactWorkOrderSchema.extend({
+  assets: z.object({
+    count: z.number(),
+    totalCount: z.number(),
+    truncated: z.boolean(),
+    items: z.array(CompactAssetSchema),
+  }),
+  notes: z.object({ count: z.number(), items: z.array(CompactNoteSchema) }).nullable(),
+  notesTruncated: z.boolean(),
+});
+
 export function toWorkOrderContext(raw: any, notes: any[] | null) {
   const assets = (raw.Assets ?? []).map(toCompactAsset);
   const totalCount = raw.AssetCount ?? assets.length;
