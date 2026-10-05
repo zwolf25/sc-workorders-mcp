@@ -16,9 +16,9 @@ _(empty — count-only mode shipped in v0.4.1, see Shipped below)_
 
 ### Next
 
-**Re-prioritized 2026-10-04**, updated 2026-10-05 after v0.9.1 shipped the environment guard and `outputSchema`. The code-mode spike is now the top item: the biggest unknown, it gates two Later items, and the output schemas it needed are in place.
+**Re-prioritized 2026-10-04**, updated 2026-10-04 after v0.9.1 shipped the environment guard and `outputSchema`. The code-mode spike is now the top item: the biggest unknown, it gates two Later items, and the output schemas it needed are in place.
 
-- **Code-mode gateway spike (Executor)** (added 2026-09-20, **top as of 2026-10-05**; `outputSchema` shipped in v0.9.1, so the gateway sees typed output) — "code mode" MCP (Cloudflare Code Mode, Anthropic's code-execution-with-MCP, gateways like executor.sh) gives the model one `execute` tool and exposes MCP tools as a generated TypeScript API; scripts run in a sandbox, so intermediate results (search → notes per WO → filter/group) never pass through the LLM's context. Executor wraps existing MCP servers, so this server needs no changes to be tried. Spike: register `sc-workorders` behind Executor (local, stdio), run one composed script (search open HVAC WOs → notes for each → summarize) against the same question via direct tool calls, and compare with `SC_METRICS_FILE` (tokens, ms, apiCalls). Record whether the ~20 req/min limit bites and whether Executor surfaces `structuredContent`. Tool-definition bloat is not the win here (9 small tools); composition is. Decision input for the two code-mode items in Later. Also the natural place to run the pending `SC_METRICS_FILE` comparison of `get_work_order_context` (2 requests) against 3 separate calls.
+- **Code-mode gateway spike (Executor)** (added 2026-09-20, **top as of 2026-10-04**; `outputSchema` shipped in v0.9.1, so the gateway sees typed output) — "code mode" MCP (Cloudflare Code Mode, Anthropic's code-execution-with-MCP, gateways like executor.sh) gives the model one `execute` tool and exposes MCP tools as a generated TypeScript API; scripts run in a sandbox, so intermediate results (search → notes per WO → filter/group) never pass through the LLM's context. Executor wraps existing MCP servers, so this server needs no changes to be tried. Spike: register `sc-workorders` behind Executor (local, stdio), run one composed script (search open HVAC WOs → notes for each → summarize) against the same question via direct tool calls, and compare with `SC_METRICS_FILE` (tokens, ms, apiCalls). Record whether the ~20 req/min limit bites and whether Executor surfaces `structuredContent`. Tool-definition bloat is not the win here (9 small tools); composition is. Decision input for the two code-mode items in Later. Also the natural place to run the pending `SC_METRICS_FILE` comparison of `get_work_order_context` (2 requests) against 3 separate calls.
 
 ### Later — valuable, but bigger scope or sequenced behind "Now"/"Next"
 
@@ -42,7 +42,7 @@ _(nothing currently queued for a specific next version)_
 
 ## Shipped
 
-### v0.9.1 (2026-10-05)
+### v0.9.1 (2026-10-04)
 - `outputSchema` on all 9 tools. Item schemas are Zod, co-located with each `toCompact*` mapper (the `Compact*` types are now `z.infer` of them); list wrappers live next to the registrations. The SDK validates every result against them. `search_work_orders` has optional `count`/`hasMore`/`workOrders` because `countOnly` returns just `{ totalCount }`. Unit check parses sparse mapper output against every schema; all 9 tools verified live over stdio.
 - Environment guard: startup log line `sc-workorders-mcp running via stdio (API: <host>)`, host only.
 - Fixed the `package-lock.json` version drift (it said 0.7.0); package.json, lockfile and server now all say 0.9.1.
@@ -101,7 +101,7 @@ _(nothing currently queued for a specific next version)_
 
 Not new capability — maintenance/quality items surfaced while building or researching this project. Same lifecycle as feature items (add, update, remove) but tracked separately since "should we fix this" is a different question from "should we build this."
 
-### Resolved (2026-10-05)
+### Resolved (2026-10-04)
 
 - **~~`package-lock.json` version drift.~~** Lockfile said 0.7.0 while `package.json` and the server said 0.9.0. Fixed in v0.9.1 with `npm install --package-lock-only`. Bump `package.json`, the lockfile (re-run that command) and the version string in `src/index.ts` together.
 
