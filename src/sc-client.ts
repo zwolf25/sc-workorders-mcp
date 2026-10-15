@@ -174,8 +174,8 @@ export function buildLocationFilter(f: LocationFilters): string | undefined {
   const clauses: string[] = [];
   // `Id eq {id}` here is a workaround, not an incidental filter: /locations({id})
   // (the parens single-item syntax) is broken server-side (see ARCHITECTURE.md's
-  // quirks). Any future entity with the same parens-500 bug (invoices is one,
-  // per BACKLOG.md) should reach for this same `{Field} eq {id}` pattern.
+  // quirks). Any future entity with the same parens-500 bug should try this same
+  // `{Field} eq {id}` pattern (it does NOT work for invoices: empty list endpoint).
   if (f.locationId) clauses.push(`Id eq ${f.locationId}`);
   if (f.name) clauses.push(`(contains(Name,${odataString(f.name)}) or contains(Address2,${odataString(f.name)}))`);
   if (f.storeId) clauses.push(`StoreId eq ${odataString(f.storeId)}`);
